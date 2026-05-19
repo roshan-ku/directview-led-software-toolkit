@@ -50,6 +50,9 @@ enum st_frame_fmt get_input_format(enum AVPixelFormat fmt) {
     case AV_PIX_FMT_YUV420P:     return ST_FRAME_FMT_YUV420CUSTOM8;
     case AV_PIX_FMT_YUV444P10LE: return ST_FRAME_FMT_YUV444PLANAR10LE;
     case AV_PIX_FMT_GBRP10LE:    return ST_FRAME_FMT_GBRPLANAR10LE;
+    case AV_PIX_FMT_YUV422P12LE: return ST_FRAME_FMT_YUV422PLANAR12LE;
+    case AV_PIX_FMT_YUV444P12LE: return ST_FRAME_FMT_YUV444PLANAR12LE;
+    case AV_PIX_FMT_GBRP12LE:    return ST_FRAME_FMT_GBRPLANAR12LE;
     default:
       LOG_ERROR("get_input_format: unsupported AVPixelFormat %d", fmt);
       return (enum st_frame_fmt)-1;
@@ -62,6 +65,10 @@ enum st20_fmt get_transport_format(enum AVPixelFormat fmt) {
     case AV_PIX_FMT_YUV420P:     return ST20_FMT_YUV_420_8BIT;
     case AV_PIX_FMT_YUV444P10LE: return ST20_FMT_YUV_444_10BIT;
     case AV_PIX_FMT_GBRP10LE:    return ST20_FMT_RGB_10BIT;
+    case AV_PIX_FMT_YUV422P12LE: return ST20_FMT_YUV_422_12BIT;
+    case AV_PIX_FMT_YUV420P12LE: return ST20_FMT_YUV_420_12BIT;
+    case AV_PIX_FMT_YUV444P12LE: return ST20_FMT_YUV_444_12BIT;
+    case AV_PIX_FMT_GBRP12LE:    return ST20_FMT_RGB_12BIT;
     default:
       LOG_ERROR("get_transport_format: unsupported AVPixelFormat %d", fmt);
       return (enum st20_fmt)-1;
