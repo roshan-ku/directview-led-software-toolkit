@@ -81,7 +81,7 @@ dvledtx uses a JSON config file with three sections:
 | **video** | `width` | Frame width in pixels |
 | | `height` | Frame height in pixels |
 | | `fps` | Frames per second (25, 30, 50, 60) |
-| | `fmt` | Pixel format (`yuv422p10le`, `yuv420`, `yuv444p10le`, `gbrp10le`) |
+| | `fmt` | Pixel format (see [Supported Formats](#supported-formats)) |
 | | `tx_url` | Path to the source video file |
 | **tx_sessions[]** | `udp_port` | UDP port for the session |
 | | `payload_type` | RTP payload type (typically 96) |
@@ -158,10 +158,17 @@ When `log_file` is set, log output is written to that file in addition to the co
 ## Supported Formats
 
 ### Video Formats
-- **yuv422p10le**: YUV 4:2:2 10-bit little endian (default)
-- **yuv420**: YUV 4:2:0 8-bit
-- **yuv444p10le**: YUV 4:4:4 10-bit little endian
-- **gbrp10le**: RGB (GBR planar) 10-bit little endian
+
+| Format | Chroma | Bit Depth | Color Space |
+|--------|--------|-----------|-------------|
+| `yuv422p10le` | 4:2:2 | 10-bit | YUV (default) |
+| `yuv420` | 4:2:0 | 8-bit | YUV |
+| `yuv444p10le` | 4:4:4 | 10-bit | YUV |
+| `gbrp10le` | 4:4:4 | 10-bit | RGB |
+| `yuv422p12le` | 4:2:2 | 12-bit | YUV |
+| `yuv420p12le` | 4:2:0 | 12-bit | YUV |
+| `yuv444p12le` | 4:4:4 | 12-bit | YUV |
+| `gbrp12le` | 4:4:4 | 12-bit | RGB |
 
 ### Frame Rates
 - 25 fps
@@ -179,6 +186,25 @@ When `log_file` is set, log output is written to that file in addition to the co
 - **Zero-copy Design**: Minimal memory copying
 - **Hardware Acceleration**: Uses MTL's hardware features
 - **Efficient Threading**: Minimal context switching
+
+### FFmpeg MTL Plugin Patch (required for 12-bit formats)
+
+The upstream FFmpeg `mtl_st20p` muxer plugin only supports `yuv422p10le`, `y210le`, and `rgb24`. To enable all formats supported by dvledtx (including 12-bit), apply the included patch after building FFmpeg with the MTL plugin:
+
+```bash
+./scripts/apply-ffmpeg-12bit-patch.sh [FFMPEG_SRC_DIR]
+```
+
+`FFMPEG_SRC_DIR` defaults to `~/ffmpeg_build/FFmpeg`. Then rebuild and install FFmpeg:
+
+```bash
+cd ~/ffmpeg_build/FFmpeg
+make -j$(nproc)
+sudo make install
+sudo ldconfig
+```
+
+The script is idempotent — it skips if the patch is already applied.
 
 ### Running Unit Tests
 
