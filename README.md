@@ -161,7 +161,7 @@ When `log_file` is set, log output is written to that file in addition to the co
 
 | Format | Chroma | Bit Depth | Color Space |
 |--------|--------|-----------|-------------|
-| `yuv422p10le` | 4:2:2 | 10-bit | YUV (default) |
+| `yuv422p10le` | 4:2:2 | 10-bit | YUV |
 | `yuv420` | 4:2:0 | 8-bit | YUV |
 | `yuv444p10le` | 4:4:4 | 10-bit | YUV |
 | `gbrp10le` | 4:4:4 | 10-bit | RGB |
