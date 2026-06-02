@@ -66,7 +66,6 @@ enum st20_fmt get_transport_format(enum AVPixelFormat fmt) {
     case AV_PIX_FMT_YUV444P10LE: return ST20_FMT_YUV_444_10BIT;
     case AV_PIX_FMT_GBRP10LE:    return ST20_FMT_RGB_10BIT;
     case AV_PIX_FMT_YUV422P12LE: return ST20_FMT_YUV_422_12BIT;
-    case AV_PIX_FMT_YUV420P12LE: return ST20_FMT_YUV_420_12BIT;
     case AV_PIX_FMT_YUV444P12LE: return ST20_FMT_YUV_444_12BIT;
     case AV_PIX_FMT_GBRP12LE:    return ST20_FMT_RGB_12BIT;
     default:

@@ -78,13 +78,6 @@ static void test_get_transport_format_yuv422p12le(void **state)
                      ST20_FMT_YUV_422_12BIT);
 }
 
-static void test_get_transport_format_yuv420p12le(void **state)
-{
-    (void)state;
-    assert_int_equal(get_transport_format(AV_PIX_FMT_YUV420P12LE),
-                     ST20_FMT_YUV_420_12BIT);
-}
-
 static void test_get_transport_format_yuv444p12le(void **state)
 {
     (void)state;
@@ -399,7 +392,6 @@ int main(void)
         cmocka_unit_test(test_get_transport_format_yuv444p10le),
         cmocka_unit_test(test_get_transport_format_gbrp10le),
         cmocka_unit_test(test_get_transport_format_yuv422p12le),
-        cmocka_unit_test(test_get_transport_format_yuv420p12le),
         cmocka_unit_test(test_get_transport_format_yuv444p12le),
         cmocka_unit_test(test_get_transport_format_gbrp12le),
         cmocka_unit_test(test_get_transport_format_unknown_returns_error),
