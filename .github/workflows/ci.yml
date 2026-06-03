@@ -21,8 +21,9 @@ concurrency:
 
 jobs:
   ci:
-    name: Continuous Integration
+    name: CI Full Validation
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     permissions:
       contents: read
     steps:
