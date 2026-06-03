@@ -139,7 +139,7 @@ jobs:
     timeout-minutes: 90
     permissions:
       contents: read
-      security-events: write
+      security-events: write # Needed to upload Coverity SARIF to the Security tab.
 
     steps:
       - name: Checkout repository

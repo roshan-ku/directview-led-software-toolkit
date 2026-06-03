@@ -23,7 +23,13 @@ runs:
 
     - name: Build and run libFuzzer (ASan)
       shell: bash
+      env:
+        MAX_SECONDS: ${{ inputs.max-seconds }}
       run: |
+        if ! [[ "$MAX_SECONDS" =~ ^[0-9]+$ ]]; then
+          echo "ERROR: max-seconds must be a positive integer"
+          exit 1
+        fi
         cd fuzz
         export CC=clang
         $CC -fsanitize=fuzzer,address -g -O1 -fno-omit-frame-pointer -I../include \
@@ -36,7 +42,7 @@ runs:
         mkdir -p libfuzzer_corpus
         ./fuzz_config_reader_libfuzzer \
           libfuzzer_corpus/ corpus/ \
-          -max_total_time=${{ inputs.max-seconds }} \
+          -max_total_time="$MAX_SECONDS" \
           -print_final_stats=1 || FUZZ_EXIT=$?
         if [ "${FUZZ_EXIT:-0}" -ne 0 ]; then
           echo "::error::libFuzzer found a crash (exit code $FUZZ_EXIT)!"
@@ -45,7 +51,13 @@ runs:
 
     - name: Build and run libFuzzer (UBSan)
       shell: bash
+      env:
+        MAX_SECONDS: ${{ inputs.max-seconds }}
       run: |
+        if ! [[ "$MAX_SECONDS" =~ ^[0-9]+$ ]]; then
+          echo "ERROR: max-seconds must be a positive integer"
+          exit 1
+        fi
         cd fuzz
         export CC=clang
         $CC -fsanitize=fuzzer,undefined -g -O1 -fno-omit-frame-pointer -I../include \
@@ -58,7 +70,7 @@ runs:
         mkdir -p ubsan_corpus
         ./fuzz_config_reader_ubsan \
           ubsan_corpus/ corpus/ \
-          -max_total_time=${{ inputs.max-seconds }} \
+          -max_total_time="$MAX_SECONDS" \
           -print_final_stats=1 || FUZZ_EXIT=$?
         if [ "${FUZZ_EXIT:-0}" -ne 0 ]; then
           echo "::error::libFuzzer+UBSan found an issue (exit code $FUZZ_EXIT)!"

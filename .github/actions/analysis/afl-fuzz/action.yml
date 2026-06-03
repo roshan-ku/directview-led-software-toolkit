@@ -50,12 +50,18 @@ runs:
 
     - name: Run AFL fuzzer
       shell: bash
+      env:
+        MAX_SECONDS: ${{ inputs.max-seconds }}
       run: |
         cd fuzz
+        if ! [[ "$MAX_SECONDS" =~ ^[0-9]+$ ]]; then
+          echo "ERROR: max-seconds must be a positive integer"
+          exit 1
+        fi
         mkdir -p findings
         export AFL_I_DONT_CARE_ABOUT_MISSING_CRASHES=1
         export AFL_SKIP_CPUFREQ=1
-        timeout "${{ inputs.max-seconds }}" afl-fuzz -i corpus/ -o findings/ -V "${{ inputs.max-seconds }}" -- ./fuzz_config_reader @@ || true
+        timeout "$MAX_SECONDS" afl-fuzz -i corpus/ -o findings/ -V "$MAX_SECONDS" -- ./fuzz_config_reader @@ || true
 
     - name: Check AFL crashes
       shell: bash
