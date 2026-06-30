@@ -42,21 +42,85 @@ jobs:
           COVERITY_URL: ${{ secrets.COVERITY_URL }}
           COVERITY_USER: ${{ secrets.COVERITY_ARTIFACTORY_USER }}
           COVERITY_PASSWORD: ${{ secrets.COVERITY_ARTIFACTORY_PASSWORD }}
+          COVERITY_TOKEN: ${{ secrets.COVERITY_TOKEN }}
+          COVERITY_PROJECT: ${{ secrets.COVERITY_PROJECT }}
+          COVERITY_SCAN_USER: ${{ secrets.COVERITY_SCAN_USER }}
+          COVERITY_SCAN_PASSWORD: ${{ secrets.COVERITY_SCAN_PASSWORD }}
         run: |
+          set -euo pipefail
           echo "===== Coverity Setup ====="
           COVERITY_DIR="$HOME/coverity"
+          COVERITY_TARBALL="/tmp/coverity.tar.gz"
           if [ -x "$COVERITY_DIR/bin/cov-build" ]; then
             echo "  [OK] Coverity already installed at $COVERITY_DIR"
             "$COVERITY_DIR/bin/cov-build" --ident | head -1 || true
             exit 0
           fi
-          echo "  Downloading Coverity..."
+
+          rm -f "$COVERITY_TARBALL"
           mkdir -p "$COVERITY_DIR"
-          wget --no-proxy -q --user="$COVERITY_USER" --password="$COVERITY_PASSWORD" \
-            -O /tmp/coverity.tar.gz "$COVERITY_URL"
+
+          DOWNLOAD_OK=0
+
+          if [ -n "${COVERITY_TOKEN:-}" ]; then
+            echo "  Downloading Coverity from scan.coverity.com (token/project mode)..."
+            PROJECT_RAW="${COVERITY_PROJECT:-OpenVisualCloud%2directview-led-software-toolkit}"
+            if [ -z "$PROJECT_RAW" ]; then
+              echo "  [WARN] No project provided via COVERITY_PROJECT or GITHUB_REPOSITORY"
+            else
+              PROJECT_ENCODED="${PROJECT_RAW//\//%2F}"
+              if wget -q --post-data "token=${COVERITY_TOKEN}&project=${PROJECT_ENCODED}" \
+                -O "$COVERITY_TARBALL" "https://scan.coverity.com/download/linux64"; then
+                DOWNLOAD_OK=1
+                echo "  [OK] Downloaded from scan.coverity.com for project ${PROJECT_RAW}"
+              else
+                echo "  [WARN] scan.coverity.com token/project download failed, trying fallback source"
+                rm -f "$COVERITY_TARBALL"
+              fi
+            fi
+          else
+            echo "  [INFO] COVERITY_TOKEN not set, skipping scan.coverity.com token/project download"
+          fi
+
+          if [ "$DOWNLOAD_OK" -eq 0 ] && [ -n "${COVERITY_SCAN_USER:-}" ] && [ -n "${COVERITY_SCAN_PASSWORD:-}" ]; then
+            echo "  Downloading Coverity from scan.coverity.com (user/password mode)..."
+            if wget -q --user="$COVERITY_SCAN_USER" --password="$COVERITY_SCAN_PASSWORD" \
+              -O "$COVERITY_TARBALL" "https://scan.coverity.com/download/cxx/linux64"; then
+              DOWNLOAD_OK=1
+              echo "  [OK] Downloaded from scan.coverity.com"
+            else
+              echo "  [WARN] scan.coverity.com user/password download failed, trying fallback source"
+              rm -f "$COVERITY_TARBALL"
+            fi
+          fi
+
+          if [ "$DOWNLOAD_OK" -eq 0 ]; then
+            if [ -n "${COVERITY_URL:-}" ] && [ -n "${COVERITY_USER:-}" ] && [ -n "${COVERITY_PASSWORD:-}" ]; then
+              echo "  Downloading Coverity from configured COVERITY_URL..."
+              wget --no-proxy -q --user="$COVERITY_USER" --password="$COVERITY_PASSWORD" \
+                -O "$COVERITY_TARBALL" "$COVERITY_URL"
+              DOWNLOAD_OK=1
+              echo "  [OK] Downloaded from COVERITY_URL"
+            fi
+          fi
+
+          if [ "$DOWNLOAD_OK" -eq 0 ] || [ ! -s "$COVERITY_TARBALL" ]; then
+            echo "ERROR: Coverity download failed."
+            echo "Set either COVERITY_TOKEN (and optionally COVERITY_PROJECT),"
+            echo "or COVERITY_SCAN_USER/COVERITY_SCAN_PASSWORD,"
+            echo "or COVERITY_URL/COVERITY_ARTIFACTORY_USER/COVERITY_ARTIFACTORY_PASSWORD secrets."
+            exit 1
+          fi
+
           echo "  Extracting Coverity..."
-          tar xzf /tmp/coverity.tar.gz --strip-components=1 -C "$COVERITY_DIR"
-          rm -f /tmp/coverity.tar.gz
+          tar xzf "$COVERITY_TARBALL" --strip-components=1 -C "$COVERITY_DIR"
+          rm -f "$COVERITY_TARBALL"
+
+          if [ ! -x "$COVERITY_DIR/bin/cov-build" ] || [ ! -x "$COVERITY_DIR/bin/cov-configure" ]; then
+            echo "ERROR: Coverity install incomplete (missing cov-build/cov-configure)."
+            exit 1
+          fi
+
           echo "  Coverity installed:"
           "$COVERITY_DIR/bin/cov-build" --ident | head -1 || true
 
