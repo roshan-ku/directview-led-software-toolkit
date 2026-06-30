@@ -131,7 +131,9 @@ dvledtx uses a JSON config file with three sections:
 | | `dip` | Destination multicast IP address |
 | **video** | `width` | Source frame width in pixels |
 | | `height` | Source frame height in pixels |
-| | `tx_url` | Path to the source video file |
+| | `input_mode` | (Optional) Video input mode: `file` (default) or `screen_capture` |
+| | `tx_url` | Path to the source video file (used when `input_mode=file`) |
+| | `screen_input` | (Optional) x11grab source string for screen capture (used when `input_mode=screen_capture`, default `:0.0+0,0`) |
 | **tx_video** | `scale_width` | (Optional) Output width after scaling |
 | | `scale_height` | (Optional) Output height after scaling |
 | | `fps` | Frames per second (25, 30, 50, 60) |
@@ -161,6 +163,28 @@ Example (`config/tx_fullhd_single_session.json`):
 ```
 
 Multiple sessions can be defined in `tx_sessions` to transmit different crop regions of the same video simultaneously (see `config/tx_fullhd_multi_session.json`).
+
+Example screen-capture input (`config/tx_fullhd_screen_capture.json`):
+```json
+{
+  "interfaces": [
+    { "name": "0000:06:00.0", "sip": "192.168.50.29", "dip": "239.168.85.20" }
+  ],
+  "video": {
+    "width": 1920,
+    "height": 1080,
+    "input_mode": "screen_capture",
+    "screen_input": ":0.0+0,0"
+  },
+  "tx_video": {
+    "fps": 30,
+    "fmt": "yuv422p10le"
+  },
+  "tx_sessions": [
+    { "udp_port": 20000, "crop": { "x": 0, "y": 0, "w": 1920, "h": 1080 } }
+  ]
+}
+```
 
 ## Logging
 

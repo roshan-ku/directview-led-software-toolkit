@@ -26,6 +26,7 @@ struct dvledtx_context {
   /* Configuration */
   char port[64];        /* DPDK NIC PCI BDF/address for MTL output (e.g. 0000:af:00.0), not a Linux interface name */
   char tx_url[256];
+  char screen_input[128];
   char config_file[256];
   char sip_addr_str[INET_ADDRSTRLEN];
   uint8_t sip_addr[4];
@@ -44,6 +45,7 @@ struct dvledtx_context {
 
   /* Session controls */
   int st20p_sessions;
+  bool use_screen_capture;
   bool exit;
   bool force_dhcp;
   int test_time_s;
