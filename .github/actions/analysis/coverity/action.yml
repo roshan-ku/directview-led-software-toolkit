@@ -13,17 +13,10 @@ runs:
       id: coverity_secrets
       shell: bash
       env:
-        COVERITY_URL: ${{ env.COVERITY_URL }}
-        COVERITY_USER: ${{ env.COVERITY_USER }}
-        COVERITY_PASSWORD: ${{ env.COVERITY_PASSWORD }}
         COVERITY_TOKEN: ${{ env.COVERITY_TOKEN }}
-        COVERITY_SCAN_USER: ${{ env.COVERITY_SCAN_USER }}
-        COVERITY_SCAN_PASSWORD: ${{ env.COVERITY_SCAN_PASSWORD }}
       run: |
         set -euo pipefail
-        if [ -n "${COVERITY_TOKEN:-}" ] || \
-           { [ -n "${COVERITY_SCAN_USER:-}" ] && [ -n "${COVERITY_SCAN_PASSWORD:-}" ]; } || \
-           { [ -n "${COVERITY_URL:-}" ] && [ -n "${COVERITY_USER:-}" ] && [ -n "${COVERITY_PASSWORD:-}" ]; }; then
+        if [ -n "${COVERITY_TOKEN:-}" ]; then
           echo "available=true" >> "$GITHUB_OUTPUT"
         else
           echo "available=false" >> "$GITHUB_OUTPUT"
@@ -31,28 +24,15 @@ runs:
         fi
 
     - name: Install Coverity
-      id: install_coverity
       if: steps.coverity_secrets.outputs.available == 'true'
       shell: bash
       env:
-        COVERITY_URL: ${{ env.COVERITY_URL }}
-        COVERITY_USER: ${{ env.COVERITY_USER }}
-        COVERITY_PASSWORD: ${{ env.COVERITY_PASSWORD }}
         COVERITY_TOKEN: ${{ env.COVERITY_TOKEN }}
-        COVERITY_SCAN_USER: ${{ env.COVERITY_SCAN_USER }}
-        COVERITY_SCAN_PASSWORD: ${{ env.COVERITY_SCAN_PASSWORD }}
       run: |
         set -euo pipefail
         echo "===== Coverity Setup ====="
         COVERITY_DIR="$HOME/coverity"
         COVERITY_TARBALL="/tmp/coverity.tar.gz"
-
-        # Determine mode based on credentials provided
-        if [ -n "${COVERITY_URL:-}" ] && [ -n "${COVERITY_USER:-}" ] && [ -n "${COVERITY_PASSWORD:-}" ]; then
-          echo "coverity_mode=local" >> "$GITHUB_OUTPUT"
-        else
-          echo "coverity_mode=scan" >> "$GITHUB_OUTPUT"
-        fi
 
         if [ -x "$COVERITY_DIR/bin/cov-build" ]; then
           echo "  [OK] Coverity already installed at $COVERITY_DIR"
@@ -63,46 +43,13 @@ runs:
         rm -f "$COVERITY_TARBALL"
         mkdir -p "$COVERITY_DIR"
 
-        DOWNLOAD_OK=0
+        echo "  Downloading Coverity from scan.coverity.com..."
+        PROJECT_ENCODED="OpenVisualCloud%2Fdirectview-led-software-toolkit"
+        wget -q --post-data "token=${COVERITY_TOKEN}&project=${PROJECT_ENCODED}" \
+          -O "$COVERITY_TARBALL" "https://scan.coverity.com/download/linux64"
 
-        if [ -n "${COVERITY_TOKEN:-}" ]; then
-          echo "  Downloading Coverity from scan.coverity.com (token/project mode)..."
-          PROJECT_ENCODED="OpenVisualCloud%2Fdirectview-led-software-toolkit"
-          if wget -q --post-data "token=${COVERITY_TOKEN}&project=${PROJECT_ENCODED}" \
-            -O "$COVERITY_TARBALL" "https://scan.coverity.com/download/linux64"; then
-            DOWNLOAD_OK=1
-            echo "  [OK] Downloaded from scan.coverity.com"
-          else
-            echo "  [WARN] scan.coverity.com token/project download failed, trying fallback source"
-            rm -f "$COVERITY_TARBALL"
-          fi
-        fi
-
-        if [ "$DOWNLOAD_OK" -eq 0 ] && [ -n "${COVERITY_SCAN_USER:-}" ] && [ -n "${COVERITY_SCAN_PASSWORD:-}" ]; then
-          echo "  Downloading Coverity from scan.coverity.com (user/password mode)..."
-          if wget -q --user="$COVERITY_SCAN_USER" --password="$COVERITY_SCAN_PASSWORD" \
-            -O "$COVERITY_TARBALL" "https://scan.coverity.com/download/cxx/linux64"; then
-            DOWNLOAD_OK=1
-            echo "  [OK] Downloaded from scan.coverity.com"
-          else
-            echo "  [WARN] scan.coverity.com user/password download failed, trying fallback source"
-            rm -f "$COVERITY_TARBALL"
-          fi
-        fi
-
-        if [ "$DOWNLOAD_OK" -eq 0 ] && [ -n "${COVERITY_URL:-}" ] && [ -n "${COVERITY_USER:-}" ] && [ -n "${COVERITY_PASSWORD:-}" ]; then
-          echo "  Downloading Coverity from configured COVERITY_URL..."
-          wget --no-proxy -q --user="$COVERITY_USER" --password="$COVERITY_PASSWORD" \
-            -O "$COVERITY_TARBALL" "$COVERITY_URL"
-          DOWNLOAD_OK=1
-          echo "  [OK] Downloaded from COVERITY_URL"
-        fi
-
-        if [ "$DOWNLOAD_OK" -eq 0 ] || [ ! -s "$COVERITY_TARBALL" ]; then
+        if [ ! -s "$COVERITY_TARBALL" ]; then
           echo "ERROR: Coverity download failed."
-          echo "Set either COVERITY_TOKEN,"
-          echo "or COVERITY_SCAN_USER/COVERITY_SCAN_PASSWORD,"
-          echo "or COVERITY_URL/COVERITY_USER/COVERITY_PASSWORD."
           exit 1
         fi
 
@@ -114,6 +61,7 @@ runs:
           exit 1
         fi
 
+        echo "  [OK] Downloaded from scan.coverity.com"
         "$COVERITY_DIR/bin/cov-build" --ident | head -1 || true
 
     - name: Run Coverity analysis
@@ -143,58 +91,21 @@ runs:
         meson setup build
         $HOME/coverity/bin/cov-build --dir coverity_output/ ninja -C build
 
-        COVERITY_MODE="${{ steps.install_coverity.outputs.coverity_mode }}"
+        echo "===== Submitting build to scan.coverity.com ====="
+        tail coverity_output/build-log.txt
+        tar czf /tmp/coverity-results.tar.gz coverity_output/
+        ls -lh /tmp/coverity-results.tar.gz
 
-        if [ "$COVERITY_MODE" = "local" ]; then
-          echo "===== Running local Coverity analysis ====="
-          $HOME/coverity/bin/cov-analyze --dir coverity_output/ \
-            --concurrency --enable-constraint-fpp --enable-fnptr --enable-virtual \
-            --disable ASSERT_SIDE_EFFECT \
-            --disable AUTO_CAUSES_COPY \
-            --disable BAD_CHECK_OF_WAIT_COND \
-            --disable BAD_SHIFT \
-            --disable COPY_INSTEAD_OF_MOVE \
-            --disable CUDA.COLLECTIVE_WARP_SHUFFLE_WIDTH \
-            --disable CUDA.CUDEVICE_HANDLES \
-            --disable CUDA.DEVICE_DEPENDENT \
-            --disable CUDA.DEVICE_DEPENDENT_CALLBACKS \
-            --disable CUDA.DIVERGENCE_AT_COLLECTIVE_OPERATION \
-            --disable CUDA.ERROR_INTERFACE \
-            --disable CUDA.ERROR_KERNEL_LAUNCH \
-            --disable CUDA.FORK \
-            --disable CUDA.INACTIVE_THREAD_AT_COLLECTIVE_WARP \
-            --disable CUDA.INITIATION_OBJECT_DEVICE_THREAD_BLOCK \
-            --disable CUDA.INVALID_MEMORY_ACCESS \
-            --disable CUDA.SHARE_FUNCTION \
-            --disable CUDA.SHARE_OBJECT_STREAM_ASSOCIATED \
-            --disable CUDA.SPECIFIERS_INCONSISTENCY \
-            --disable CUDA.SYNCHRONIZE_TERMINATION \
-            --disable INEFFICIENT_RESERVE \
-            --disable MISSING_COMMA \
-            --disable MISSING_MOVE_ASSIGNMENT \
-            --disable OVERLAPPING_COPY \
-            --disable STREAM_FORMAT_STATE \
-            --disable UNINTENDED_INTEGER_DIVISION
+        curl --form "token=${COVERITY_TOKEN}" \
+          --form "email=coverity@openvisualcloud.org" \
+          --form "file=@/tmp/coverity-results.tar.gz" \
+          --form "version=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
+          --form "description=CI build from branch ${GITHUB_REF_NAME:-unknown}" \
+          "https://scan.coverity.com/builds?project=OpenVisualCloud%2Fdirectview-led-software-toolkit"
 
-          $HOME/coverity/bin/cov-format-errors --dir coverity_output/ \
-            --json-output-v8 "$REPORT_DIR/coverity-report.json"
-        else
-          echo "===== Submitting build to scan.coverity.com for server-side analysis ====="
-          tail coverity_output/build-log.txt
-          tar czf /tmp/coverity-results.tar.gz coverity_output/
-          ls -lh /tmp/coverity-results.tar.gz
-
-          curl --form "token=${COVERITY_TOKEN}" \
-            --form "email=coverity@openvisualcloud.org" \
-            --form "file=@/tmp/coverity-results.tar.gz" \
-            --form "version=$(git rev-parse --short HEAD 2>/dev/null || echo unknown)" \
-            --form "description=CI build from branch ${GITHUB_REF_NAME:-unknown}" \
-            "https://scan.coverity.com/builds?project=OpenVisualCloud%2Fdirectview-led-software-toolkit"
-
-          rm -f /tmp/coverity-results.tar.gz
-          echo '{"issues":[]}' > "$REPORT_DIR/coverity-report.json"
-          echo "  Results will be available at: https://scan.coverity.com/projects/OpenVisualCloud%2Fdirectview-led-software-toolkit"
-        fi
+        rm -f /tmp/coverity-results.tar.gz
+        echo '{"issues":[]}' > "$REPORT_DIR/coverity-report.json"
+        echo "  Results will be available at: https://scan.coverity.com/projects/OpenVisualCloud%2Fdirectview-led-software-toolkit"
 
     - name: Convert Coverity JSON to SARIF
       if: steps.coverity_secrets.outputs.available == 'true'
