@@ -17,16 +17,18 @@ libswscale_dep  = dependency('libswscale',  required: true)
 enable_mtl_tx = get_option('enable_mtl_tx')
 
 mtl_dep      = []
-avdevice_dep = []
 c_args       = ['-DALLOW_EXPERIMENTAL_API', '-D_FORTIFY_SOURCE=2', '-O2']
 mtl_inc_args = []
+
+# libavdevice is needed regardless of the TX path: the mtl_st20p muxer TX
+# path uses it directly, and the MTL-native TX path still needs it for the
+# x11grab screen-capture input decoder (avdevice_register_all()).
+avdevice_dep = dependency('libavdevice', required: true)
 
 if enable_mtl_tx
   mtl_dep      = dependency('mtl', required: true)
   c_args      += ['-DENABLE_MTL_TX']
   mtl_inc_args = ['-I/usr/local/include/mtl']
-else
-  avdevice_dep = dependency('libavdevice', required: true)
 endif
 
 all_deps = [m_dep, pthread_dep,

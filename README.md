@@ -186,6 +186,53 @@ Example screen-capture input (`config/tx_fullhd_screen_capture.json`):
 }
 ```
 
+`screen_input` follows FFmpeg's `x11grab` URL syntax: `<display>[+<x>,<y>]` (e.g. `:0.0+0,0` captures display `:0` starting at offset `0,0`). The capture resolution/framerate are taken from the `width`/`height`/`fps` fields above.
+
+#### Screen capture on a headless machine (no physical monitor)
+
+`x11grab` needs a real X11 display to attach to — it does not work against a raw framebuffer or DRM device. On a machine with no monitor connected, create a virtual display with `Xvfb` and run a desktop session on it so there's actual content to capture:
+
+1. **Install prerequisites** (once):
+   ```bash
+   sudo apt-get install -y xvfb ubuntu-desktop
+   ```
+   FFmpeg itself must also be built with `x11grab` support — this requires `libxcb1-dev`, `libxcb-shm0-dev`, and `libxcb-xfixes0-dev` to be present when FFmpeg's `./configure` runs (it auto-detects them, no explicit `--enable-x11grab` flag needed). Verify with `ffmpeg -devices | grep x11grab`.
+
+2. **Start a virtual display** at the resolution you intend to transmit:
+   ```bash
+   Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp +extension GLX +extension RANDR &
+   ```
+
+3. **Start a GNOME desktop session** on that display (software GL rendering is required since Xvfb has no GPU):
+   ```bash
+   mkdir -p /tmp/gnome99-runtime && chmod 700 /tmp/gnome99-runtime
+   DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
+     XDG_RUNTIME_DIR=/tmp/gnome99-runtime \
+     dbus-run-session -- gnome-session --session=ubuntu &
+   ```
+   Give it a few seconds to finish starting (`gnome-shell` and related services), then confirm with:
+   ```bash
+   DISPLAY=:99 ffmpeg -f x11grab -video_size 1920x1080 -i :99.0+0,0 -frames:v 1 -update 1 /tmp/check.png
+   ```
+
+4. **Point `screen_input` at the virtual display** (see `config/tx_fullhd_virtual_display.json`):
+   ```json
+   "screen_input": ":99.0+0,0"
+   ```
+
+5. **Run dvledtx** as usual — `x11grab` will capture whatever is rendered on `:99` (desktop, windows, applications) and transmit it, exactly as it would for a physical display:
+   ```bash
+   ./build/dvledtx --config config/tx_fullhd_virtual_display.json
+   ```
+
+6. **Tear down** when done:
+   ```bash
+   pkill -f "gnome-session --session=ubuntu"
+   pkill -f "Xvfb :99"
+   ```
+
+A lighter-weight alternative to a full GNOME session is a minimal window manager (e.g. `xfce4`), which starts faster and uses less memory if you only need a generic desktop background rather than the full Ubuntu shell.
+
 ## Logging
 
 dvledtx includes a built-in logger with configurable output targets and log levels.
