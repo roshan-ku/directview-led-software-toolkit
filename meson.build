@@ -16,9 +16,9 @@ libswscale_dep  = dependency('libswscale',  required: true)
 # TX path selection — see meson_options.txt for details.
 enable_mtl_tx = get_option('enable_mtl_tx')
 
-mtl_dep      = []
+# MTL is a required dependency for both TX paths — see src/mtl/mtl_tx.c.
+mtl_dep      = dependency('mtl', required: true)
 c_args       = ['-DALLOW_EXPERIMENTAL_API', '-D_FORTIFY_SOURCE=2', '-O2']
-mtl_inc_args = []
 
 # libavdevice is needed regardless of the TX path: the mtl_st20p muxer TX
 # path uses it directly, and the MTL-native TX path still needs it for the
@@ -26,9 +26,7 @@ mtl_inc_args = []
 avdevice_dep = dependency('libavdevice', required: true)
 
 if enable_mtl_tx
-  mtl_dep      = dependency('mtl', required: true)
   c_args      += ['-DENABLE_MTL_TX']
-  mtl_inc_args = ['-I/usr/local/include/mtl']
 endif
 
 all_deps = [m_dep, pthread_dep,
@@ -48,7 +46,7 @@ executable('dvledtx',
   ],
   include_directories: include_directories('include'),
   dependencies: all_deps,
-  c_args: c_args + mtl_inc_args,
+  c_args: c_args,
   link_args: ['-s'],
   build_rpath: '',
   install: false
