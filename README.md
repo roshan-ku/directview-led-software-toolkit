@@ -105,7 +105,7 @@ FFmpeg is an open source project licensed under LGPL and GPL. See https://www.ff
     If this prints nothing, FFmpeg needs to be reconfigured/rebuilt after installing the packages above — screen capture will otherwise fail at runtime with `x11grab input format not found`.
   - **Headless machines (no physical monitor)** additionally need a virtual display to capture from — see [Screen capture on a headless machine](#screen-capture-on-a-headless-machine-no-physical-monitor) below, which requires:
     ```bash
-    sudo apt-get install -y xvfb ubuntu-desktop
+    sudo apt-get install -y xserver-xorg-video-dummy ubuntu-desktop
     ```
 
 ### Build Steps
@@ -186,26 +186,80 @@ Multiple sessions can be defined in `tx_sessions` to transmit different crop reg
 
 #### Screen capture on a headless machine (no physical monitor)
 
-`x11grab` needs a real X11 display to attach to — it does not work against a raw framebuffer or DRM device. On a machine with no monitor connected, create a virtual display with `Xvfb` and run a desktop session on it so there's actual content to capture:
+`x11grab` needs a real X11 display to attach to — it does not work against a raw framebuffer or DRM device. On a machine with no monitor connected, create a virtual display using Xorg with the `dummy` video driver and run a desktop session on it so there's actual content to capture. Unlike Xvfb, a real Xorg server claims physical input devices — your keyboard and mouse work directly on the virtual display.
 
-1. **Install prerequisites** (once): see [Software Requirements](#software-requirements) for the `xvfb`/`ubuntu-desktop` packages and the `x11grab`-enabled FFmpeg build.
+1. **Install prerequisites** (once): see [Software Requirements](#software-requirements) for the `xserver-xorg-video-dummy`/`ubuntu-desktop` packages and the `x11grab`-enabled FFmpeg build.
 
-2. **Start a virtual display** at the resolution you intend to transmit:
+2. **Create an Xorg config** for the dummy driver:
    ```bash
-   Xvfb :99 -screen 0 1920x1080x24 -nolisten tcp +extension GLX +extension RANDR &
+   sudo tee /tmp/xorg-dummy.conf > /dev/null << 'EOF'
+   Section "Device"
+       Identifier "dummy"
+       Driver "dummy"
+       VideoRam 256000
+   EndSection
+
+   Section "Monitor"
+       Identifier "monitor"
+       HorizSync 28.0-80.0
+       VertRefresh 48.0-75.0
+       Modeline "1920x1080" 148.50 1920 2008 2052 2200 1080 1084 1089 1125 +hsync +vsync
+   EndSection
+
+   Section "Screen"
+       Identifier "screen"
+       Device "dummy"
+       Monitor "monitor"
+       DefaultDepth 24
+       SubSection "Display"
+           Depth 24
+           Modes "1920x1080"
+       EndSubSection
+   EndSection
+
+   Section "ServerLayout"
+       Identifier "layout"
+       Screen "screen"
+       Option "AllowEmptyInput" "false"
+   EndSection
+   EOF
    ```
 
-3. **Start a GNOME desktop session** on that display (software GL rendering is required since Xvfb has no GPU):
+3. **Start Xorg** on display `:99`:
    ```bash
+   sudo Xorg :99 -config /tmp/xorg-dummy.conf -noreset &
+   ```
+
+4. **Allow root access** and **start a GNOME desktop session** (software GL rendering is required since there is no GPU; `PULSE_SERVER` routes audio to the physical audio device):
+   ```bash
+   DISPLAY=:99 xhost +local:root
    mkdir -p /tmp/gnome99-runtime && chmod 700 /tmp/gnome99-runtime
    DISPLAY=:99 LIBGL_ALWAYS_SOFTWARE=1 XDG_SESSION_TYPE=x11 \
      XDG_RUNTIME_DIR=/tmp/gnome99-runtime \
+     PULSE_SERVER=unix:/run/user/$(id -u)/pulse/native \
      dbus-run-session -- gnome-session --session=ubuntu &
    ```
-   Give it a few seconds to finish starting (`gnome-shell` and related services), then confirm with:
+
+5. **Verify** the display is working (give GNOME a few seconds to start):
    ```bash
    DISPLAY=:99 ffmpeg -f x11grab -video_size 1920x1080 -i :99.0+0,0 -frames:v 1 -update 1 /tmp/check.png
    ```
+
+Your physical keyboard and mouse now control the virtual display directly.
+
+> **Audio:** If audio is not working (e.g. PulseAudio only has a `null` sink), load your physical audio device manually:
+> ```bash
+> # List available ALSA devices
+> aplay -l
+> # Load the desired device (e.g. USB headset on card 1)
+> pactl load-module module-alsa-sink device=hw:1,0 sink_name=plantronics sink_properties=device.description="Plantronics_Headset"
+> pactl set-default-sink plantronics
+> ```
+>
+> Applications launched on the virtual display (e.g. Chrome) must also have `PULSE_SERVER` set:
+> ```bash
+> DISPLAY=:99 PULSE_SERVER=unix:/run/user/$(id -u)/pulse/native google-chrome &
+> ```
 
 #### Example: screen-capture input (`config/tx_fullhd_screen_capture.json`)
 
@@ -230,6 +284,33 @@ Multiple sessions can be defined in `tx_sessions` to transmit different crop reg
 }
 ```
 
+#### Example: multi-session screen capture (`config/tx_fullhd_screen_capture_multi_session.json`)
+
+Splits a 1920×1080 screen capture into 3 vertical strips, each transmitted as a separate ST2110 session:
+
+```json
+{
+  "interfaces": [
+    { "name": "0000:06:00.0", "sip": "192.168.50.29", "dip": "239.168.85.20" }
+  ],
+  "video": {
+    "width": 1920,
+    "height": 1080,
+    "input_mode": "screen_capture",
+    "screen_input": ":99.0+0,0"
+  },
+  "tx_video": {
+    "fps": 30,
+    "fmt": "yuv422p10le"
+  },
+  "tx_sessions": [
+    { "udp_port": 20000, "payload_type": 96, "crop": { "x": 0,    "y": 0, "w": 640, "h": 1080 } },
+    { "udp_port": 20002, "payload_type": 96, "crop": { "x": 640,  "y": 0, "w": 640, "h": 1080 } },
+    { "udp_port": 20004, "payload_type": 96, "crop": { "x": 1280, "y": 0, "w": 640, "h": 1080 } }
+  ]
+}
+```
+
 `screen_input` follows FFmpeg's `x11grab` URL syntax: `<display>[+<x>,<y>]` (e.g. `:99.0+0,0` captures display `:99`, matching the virtual display created above, starting at offset `0,0`). The capture resolution/framerate are taken from the `width`/`height`/`fps` fields above.
 
 Run dvledtx as usual — `x11grab` will capture whatever is rendered on the display (desktop, windows, applications) and transmit it, exactly as it would for a physical display:
@@ -240,7 +321,7 @@ Run dvledtx as usual — `x11grab` will capture whatever is rendered on the disp
 **Tear down** the virtual display when done:
 ```bash
 pkill -f "gnome-session --session=ubuntu"
-pkill -f "Xvfb :99"
+sudo pkill -f "Xorg :99"
 ```
 
 ## Logging
