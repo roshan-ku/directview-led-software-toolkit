@@ -9,63 +9,40 @@
 # reduced to `c-cpp` and the build mode set to `manual`, reusing the existing
 # environment-check/build-dvledtx composite actions so CodeQL traces the same
 # build the rest of CI performs.
-name: "CodeQL Advanced"
+name: CodeQL Scan
 
 on:
-  # Allow this to also be manually triggered against a specific branch
-  workflow_dispatch:
-    inputs:
-      branch:
-        description: 'Branch to run on'
-        required: true
-        default: 'main'
-  push:
-    branches: [ "main" ]
-  pull_request:
-    branches: [ "main" ]
   schedule:
+    # Weekly on Monday at 07:19 UTC
     - cron: '19 7 * * 1'
+  workflow_dispatch:
 
-permissions:
-  contents: read
-  actions: read
+permissions: {}
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  analyze:
-    name: Analyze (${{ matrix.language }})
+  codeql:
+    name: CodeQL Scan
     runs-on: ubuntu-latest
     timeout-minutes: 45
     permissions:
-      # required for all workflows
-      security-events: write
-
-      # required to fetch internal or private CodeQL packs
-      packages: read
-
-      # only required for workflows in private repositories
-      actions: read
       contents: read
-
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          # CodeQL supports: 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin',
-          # 'javascript-typescript', 'python', 'ruby', 'swift'.
-          # dvledtx is a C project built via meson/ninja, so `c-cpp` with a
-          # manual build step is required (autobuild does not detect meson).
-          - language: c-cpp
-            build-mode: manual
+      security-events: write # Required to upload SARIF results to GitHub Security tab
 
     steps:
+      - name: Clean up previous run
+        env:
+          WORKSPACE: ${{ github.workspace }}
+        run: |
+          find "$WORKSPACE" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+
       - name: Checkout repository
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
-          ref: ${{ github.event.inputs.branch || github.sha }}
+          ref: ${{ github.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -76,16 +53,15 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
-          languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
+          languages: c-cpp
+          build-mode: manual
 
       # `c-cpp` always requires a manual build so CodeQL can trace the
       # compiler invocations produced by meson/ninja.
-      - if: matrix.build-mode == 'manual'
-        name: Build dvledtx
+      - name: Build dvledtx
         uses: ./.github/actions/build-dvledtx
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
-          category: "/language:${{matrix.language}}"
+          category: "/language:c-cpp"
