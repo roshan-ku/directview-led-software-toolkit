@@ -1,0 +1,91 @@
+#
+# BSD 3-Clause License
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# CodeQL Advanced workflow for dvledtx (C/C++ project built with meson/ninja).
+#
+# This repository only contains C sources, so the language matrix has been
+# reduced to `c-cpp` and the build mode set to `manual`, reusing the existing
+# environment-check/build-dvledtx composite actions so CodeQL traces the same
+# build the rest of CI performs.
+name: "CodeQL Advanced"
+
+on:
+  # Allow this to also be manually triggered against a specific branch
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: 'Branch to run on'
+        required: true
+        default: 'main'
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+  schedule:
+    - cron: '19 7 * * 1'
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    permissions:
+      # required for all workflows
+      security-events: write
+
+      # required to fetch internal or private CodeQL packs
+      packages: read
+
+      # only required for workflows in private repositories
+      actions: read
+      contents: read
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # CodeQL supports: 'actions', 'c-cpp', 'csharp', 'go', 'java-kotlin',
+          # 'javascript-typescript', 'python', 'ruby', 'swift'.
+          # dvledtx is a C project built via meson/ninja, so `c-cpp` with a
+          # manual build step is required (autobuild does not detect meson).
+          - language: c-cpp
+            build-mode: manual
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ github.event.inputs.branch || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Environment check
+        uses: ./.github/actions/environment-check
+
+      # Initializes the CodeQL tools for scanning.
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+
+      # `c-cpp` always requires a manual build so CodeQL can trace the
+      # compiler invocations produced by meson/ninja.
+      - if: matrix.build-mode == 'manual'
+        name: Build dvledtx
+        uses: ./.github/actions/build-dvledtx
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+        with:
+          category: "/language:${{matrix.language}}"
