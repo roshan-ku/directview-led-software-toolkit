@@ -18,6 +18,7 @@
 - [Usage](#usage)
   - [Binding Ethernet Controller to DPDK PMD and Hugepage Setup](#binding-ethernet-controller-to-dpdk-pmd-and-hugepage-setup)
   - [JSON Configuration](#json-configuration)
+    - [Ensuring an X11 session (required for screen capture)](#ensuring-an-x11-session-required-for-screen-capture)
     - [Screen capture on a headless machine (no physical monitor)](#screen-capture-on-a-headless-machine-no-physical-monitor)
 - [Logging](#logging)
 - [Command-Line Options](#command-line-options)
@@ -103,6 +104,7 @@ FFmpeg is an open source project licensed under LGPL and GPL. See https://www.ff
     ffmpeg -devices | grep x11grab
     ```
     If this prints nothing, FFmpeg needs to be reconfigured/rebuilt after installing the packages above — screen capture will otherwise fail at runtime with `x11grab input format not found`.
+  - **`x11grab` only works against an X11 (Xorg) display, not Wayland** — see [Ensuring an X11 session](#ensuring-an-x11-session-required-for-screen-capture) below if you're capturing from a machine's own physical desktop session.
   - **Headless machines (no physical monitor)** additionally need a virtual display to capture from — see [Screen capture on a headless machine](#screen-capture-on-a-headless-machine-no-physical-monitor) below, which requires:
     ```bash
     sudo apt-get install -y xserver-xorg-video-dummy ubuntu-desktop
@@ -183,6 +185,28 @@ dvledtx uses a JSON config file with three sections:
 ```
 
 Multiple sessions can be defined in `tx_sessions` to transmit different crop regions of the same video simultaneously (see `config/tx_fullhd_multi_session.json`).
+
+#### Ensuring an X11 session (required for screen capture)
+
+`x11grab` can only capture from a native X11 (Xorg) display — it does not work against a Wayland compositor. This mainly affects **machines with a physical monitor** logging into their own desktop session: current Ubuntu releases (22.04 and later) default new GDM logins to a **Wayland** session, which causes `screen_capture` to fail (or silently capture a blank/incorrect frame) even though FFmpeg was built correctly with `x11grab` support.
+
+> The [headless setup below](#screen-capture-on-a-headless-machine-no-physical-monitor) is unaffected by this — it starts a real Xorg server directly (`Xorg :99 ...`) and forces the desktop session running on top of it with `XDG_SESSION_TYPE=x11`, so no GDM/Wayland session is ever involved.
+
+To capture from a machine's own physical display, make sure that desktop session is running X11, not Wayland:
+
+- **Per-login (manual)**: at the GDM login screen, click the gear icon next to the password field and choose **"Ubuntu on Xorg"** instead of the default **"Ubuntu"** (Wayland) before signing in.
+- **System-wide (automatic)**: disable Wayland in GDM so every login defaults to X11 — edit `/etc/gdm3/custom.conf` and uncomment/set `WaylandEnable=false` under the `[daemon]` section, or apply it directly:
+  ```bash
+  sudo cp /etc/gdm3/custom.conf /etc/gdm3/custom.conf.bak
+  sudo sed -i 's/^#\?WaylandEnable=.*/WaylandEnable=false/' /etc/gdm3/custom.conf
+  grep -q '^WaylandEnable=false' /etc/gdm3/custom.conf || \
+    sudo sed -i '/^\[daemon\]/a WaylandEnable=false' /etc/gdm3/custom.conf
+  sudo systemctl restart gdm3   # or: sudo reboot
+  ```
+  Restarting `gdm3` logs out the current session — save your work first. After logging back in, verify the session type:
+  ```bash
+  echo $XDG_SESSION_TYPE   # should print: x11
+  ```
 
 #### Screen capture on a headless machine (no physical monitor)
 
