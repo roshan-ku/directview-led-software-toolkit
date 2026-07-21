@@ -289,6 +289,34 @@ static void test_mtl_copy_null_planes_no_crash(void **state)
     av_frame_free(&src);
 }
 
+static void test_mtl_copy_invalid_crop_rect_no_copy(void **state)
+{
+    (void)state;
+    uint8_t *bufs[3] = {0};
+    struct st_frame *dst = make_dst_frame(AV_PIX_FMT_YUV422P10LE, 16, 16, bufs);
+    assert_non_null(dst);
+    AVFrame *src = make_src_frame(AV_PIX_FMT_YUV422P10LE, 16, 16, 0xCC);
+    assert_non_null(src);
+    /* crop_w <= 0 → invalid rect branch returns early without copying */
+    mtl_copy_crop_to_frame(dst, src, 0, 0, 0, 16, AV_PIX_FMT_YUV422P10LE);
+    av_frame_free(&src);
+    free_dst_frame(dst, bufs);
+}
+
+static void test_mtl_copy_crop_exceeds_source_no_copy(void **state)
+{
+    (void)state;
+    uint8_t *bufs[3] = {0};
+    struct st_frame *dst = make_dst_frame(AV_PIX_FMT_YUV422P10LE, 16, 16, bufs);
+    assert_non_null(dst);
+    AVFrame *src = make_src_frame(AV_PIX_FMT_YUV422P10LE, 16, 16, 0xDD);
+    assert_non_null(src);
+    /* crop_x + crop_w = 8 + 16 = 24 > src width 16 → exceeds-source branch */
+    mtl_copy_crop_to_frame(dst, src, 8, 0, 16, 16, AV_PIX_FMT_YUV422P10LE);
+    av_frame_free(&src);
+    free_dst_frame(dst, bufs);
+}
+
 /* =========================================================================
  * mtl_copy_crop_to_frame — data correctness
  * ========================================================================= */
@@ -581,6 +609,8 @@ int main(void)
         cmocka_unit_test(test_mtl_copy_null_dst_no_crash),
         cmocka_unit_test(test_mtl_copy_null_src_no_crash),
         cmocka_unit_test(test_mtl_copy_null_planes_no_crash),
+        cmocka_unit_test(test_mtl_copy_invalid_crop_rect_no_copy),
+        cmocka_unit_test(test_mtl_copy_crop_exceeds_source_no_copy),
 
         /* mtl_copy_crop_to_frame — data correctness */
         cmocka_unit_test(test_mtl_copy_yuv422p10le_full_frame),

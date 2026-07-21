@@ -382,6 +382,39 @@ static void test_ffmpeg_tx_send_yuv_frame_pipeline(void **state)
     close_ffmpeg_tx(&ctx);
 }
 
+/* ffmpeg_tx_send_yuv_frame — crop rectangle exceeds source → crop_yuv_frame
+ * fails and the send returns -1 (covers the crop-failure error branch). */
+static void test_ffmpeg_tx_send_yuv_frame_bad_crop_fails(void **state)
+{
+    (void)state;
+    avdevice_register_all();
+
+    struct dvledtx_context app;
+    fill_app_16x16(&app, 1);
+    app.exit      = false;
+    g_test_exit = false;
+
+    struct st20p_tx_ctx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.idx         = 0;
+    ctx.app         = &app;
+    ctx.crop_width  = 16;
+    ctx.crop_height = 16;
+
+    assert_int_equal(open_ffmpeg_tx(&ctx), 0);
+    assert_int_equal(load_video_source(&ctx, TEST_VIDEO_PATH), 0);
+
+    assert_true(ffmpeg_decode_next_frame(&ctx));
+    assert_non_null(ctx.yuv_frame);
+
+    /* crop_x + crop_w = 8 + 16 = 24 > source width 16 → crop_yuv_frame fails */
+    int ret = ffmpeg_tx_send_yuv_frame(&ctx, ctx.yuv_frame, 8, 0, 16, 16);
+    assert_int_equal(ret, -1);
+
+    close_ffmpeg_source(&ctx);
+    close_ffmpeg_tx(&ctx);
+}
+
 /* =========================================================================
  * open_ffmpeg_tx — multi-NIC redundant-port registration (idx 0, nic_count 2)
  * ========================================================================= */
@@ -505,6 +538,7 @@ int main(void)
 
         /* pipeline: decode + tx_send_yuv_frame */
         cmocka_unit_test(test_ffmpeg_tx_send_yuv_frame_pipeline),
+        cmocka_unit_test(test_ffmpeg_tx_send_yuv_frame_bad_crop_fails),
 
         /* raw YUV send path */
         cmocka_unit_test(test_ffmpeg_tx_send_raw_yuv_guard),

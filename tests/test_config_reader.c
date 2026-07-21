@@ -905,6 +905,112 @@ static void test_validate_no_scale_passes(void **state)
     dvledtx_config_free(&cfg);
 }
 
+static void test_validate_nic_index_out_of_range_fails(void **state)
+{
+    (void)state;
+    struct dvledtx_config cfg;
+    fill_valid_config(&cfg);
+    cfg.sessions[0].nic_index = 5; /* only 1 NIC parsed → out of range */
+    assert_int_equal(validate_tx_config(&cfg), -1);
+    dvledtx_config_free(&cfg);
+}
+
+static void test_validate_crop_nonpositive_fails(void **state)
+{
+    (void)state;
+    struct dvledtx_config cfg;
+    fill_valid_config(&cfg);
+    cfg.sessions[0].crop_w = 0; /* width must be > 0 */
+    assert_int_equal(validate_tx_config(&cfg), -1);
+    dvledtx_config_free(&cfg);
+}
+
+static void test_validate_payload_type_out_of_range_fails(void **state)
+{
+    (void)state;
+    struct dvledtx_config cfg;
+    fill_valid_config(&cfg);
+    cfg.sessions[0].payload_type = 50; /* outside dynamic range 96-127 */
+    assert_int_equal(validate_tx_config(&cfg), -1);
+    dvledtx_config_free(&cfg);
+}
+
+static void test_validate_crop_y_misaligned_yuv420_fails(void **state)
+{
+    (void)state;
+    struct dvledtx_config cfg;
+    fill_valid_config(&cfg);
+    strncpy(cfg.fmt, "yuv420", sizeof(cfg.fmt) - 1); /* y_align=2 */
+    cfg.sessions[0].crop_y = 1;    /* odd → not a multiple of 2 */
+    cfg.sessions[0].crop_h = 1078; /* even, crop_y+crop_h=1079 < 1080 */
+    assert_int_equal(validate_tx_config(&cfg), -1);
+    dvledtx_config_free(&cfg);
+}
+
+static void test_validate_crop_h_misaligned_yuv420_fails(void **state)
+{
+    (void)state;
+    struct dvledtx_config cfg;
+    fill_valid_config(&cfg);
+    strncpy(cfg.fmt, "yuv420", sizeof(cfg.fmt) - 1); /* y_align=2 */
+    cfg.sessions[0].crop_y = 0;
+    cfg.sessions[0].crop_h = 1077; /* odd → not a multiple of 2 */
+    assert_int_equal(validate_tx_config(&cfg), -1);
+    dvledtx_config_free(&cfg);
+}
+
+/* ==========================================================================
+ * resolve_ip_addrs tests
+ * ========================================================================== */
+
+static void test_resolve_ip_addrs_valid(void **state)
+{
+    (void)state;
+    struct dvledtx_context ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    dvledtx_context_alloc(&ctx, 1, 1);
+    strncpy(ctx.nics[0].sip_addr_str, "192.168.50.29", sizeof(ctx.nics[0].sip_addr_str) - 1);
+    strncpy(ctx.nics[0].dip_addr_str, "239.168.85.20", sizeof(ctx.nics[0].dip_addr_str) - 1);
+    assert_int_equal(resolve_ip_addrs(&ctx), 0);
+    dvledtx_context_free(&ctx);
+}
+
+static void test_resolve_ip_addrs_empty_sip_dhcp(void **state)
+{
+    (void)state;
+    struct dvledtx_context ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    dvledtx_context_alloc(&ctx, 1, 1);
+    ctx.nics[0].sip_addr_str[0] = '\0'; /* empty → DHCP mode */
+    strncpy(ctx.nics[0].dip_addr_str, "239.168.85.20", sizeof(ctx.nics[0].dip_addr_str) - 1);
+    assert_int_equal(resolve_ip_addrs(&ctx), 0);
+    dvledtx_context_free(&ctx);
+}
+
+static void test_resolve_ip_addrs_invalid_sip_fails(void **state)
+{
+    (void)state;
+    struct dvledtx_context ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    dvledtx_context_alloc(&ctx, 1, 1);
+    strncpy(ctx.nics[0].sip_addr_str, "999.1.1.1", sizeof(ctx.nics[0].sip_addr_str) - 1);
+    strncpy(ctx.nics[0].dip_addr_str, "239.168.85.20", sizeof(ctx.nics[0].dip_addr_str) - 1);
+    assert_int_equal(resolve_ip_addrs(&ctx), -1);
+    dvledtx_context_free(&ctx);
+}
+
+static void test_resolve_ip_addrs_invalid_dip_fails(void **state)
+{
+    (void)state;
+    struct dvledtx_context ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    dvledtx_context_alloc(&ctx, 1, 1);
+    strncpy(ctx.nics[0].sip_addr_str, "192.168.50.29", sizeof(ctx.nics[0].sip_addr_str) - 1);
+    strncpy(ctx.nics[0].dip_addr_str, "not-an-ip", sizeof(ctx.nics[0].dip_addr_str) - 1);
+    assert_int_equal(resolve_ip_addrs(&ctx), -1);
+    dvledtx_context_free(&ctx);
+}
+
 static void test_validate_unknown_input_mode_fails(void **state)
 {
     (void)state;
@@ -1608,6 +1714,15 @@ int main(void)
         cmocka_unit_test(test_validate_scale_crop_exceeds_scaled_dims_fails),
         cmocka_unit_test(test_validate_scale_crop_within_scaled_dims_passes),
         cmocka_unit_test(test_validate_no_scale_passes),
+        cmocka_unit_test(test_validate_nic_index_out_of_range_fails),
+        cmocka_unit_test(test_validate_crop_nonpositive_fails),
+        cmocka_unit_test(test_validate_payload_type_out_of_range_fails),
+        cmocka_unit_test(test_validate_crop_y_misaligned_yuv420_fails),
+        cmocka_unit_test(test_validate_crop_h_misaligned_yuv420_fails),
+        cmocka_unit_test(test_resolve_ip_addrs_valid),
+        cmocka_unit_test(test_resolve_ip_addrs_empty_sip_dhcp),
+        cmocka_unit_test(test_resolve_ip_addrs_invalid_sip_fails),
+        cmocka_unit_test(test_resolve_ip_addrs_invalid_dip_fails),
         cmocka_unit_test(test_validate_unknown_input_mode_fails),
         cmocka_unit_test(test_validate_screen_capture_without_screen_input_fails),
         cmocka_unit_test(test_validate_screen_capture_with_screen_input_passes),
