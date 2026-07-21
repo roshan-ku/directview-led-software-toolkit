@@ -254,6 +254,27 @@ static void free_dst_frame(struct st_frame *f, uint8_t **bufs)
     free(f);
 }
 
+/* Verify every byte of the calloc'd destination planes is still zero, i.e.
+ * mtl_copy_crop_to_frame() wrote nothing (used by the invalid-rect tests to
+ * assert the early-return contract, not merely the absence of a crash). */
+static bool dst_planes_all_zero(uint8_t **bufs, enum AVPixelFormat fmt,
+                                int crop_w, int crop_h)
+{
+    const AVPixFmtDescriptor *desc = av_pix_fmt_desc_get(fmt);
+    int bps      = (desc->comp[0].depth + 7) / 8;
+    int chroma_w = crop_w >> desc->log2_chroma_w;
+    int chroma_h = crop_h >> desc->log2_chroma_h;
+    size_t sizes[3] = {
+        (size_t)crop_w   * crop_h   * bps,
+        (size_t)chroma_w * chroma_h * bps,
+        (size_t)chroma_w * chroma_h * bps,
+    };
+    for (int p = 0; p < 3; p++)
+        for (size_t i = 0; i < sizes[p]; i++)
+            if (bufs[p][i] != 0) return false;
+    return true;
+}
+
 /* =========================================================================
  * mtl_copy_crop_to_frame — null guards
  * ========================================================================= */
@@ -299,6 +320,8 @@ static void test_mtl_copy_invalid_crop_rect_no_copy(void **state)
     assert_non_null(src);
     /* crop_w <= 0 → invalid rect branch returns early without copying */
     mtl_copy_crop_to_frame(dst, src, 0, 0, 0, 16, AV_PIX_FMT_YUV422P10LE);
+    /* Contract: nothing was written — dst planes stay zero-filled. */
+    assert_true(dst_planes_all_zero(bufs, AV_PIX_FMT_YUV422P10LE, 16, 16));
     av_frame_free(&src);
     free_dst_frame(dst, bufs);
 }
@@ -313,6 +336,8 @@ static void test_mtl_copy_crop_exceeds_source_no_copy(void **state)
     assert_non_null(src);
     /* crop_x + crop_w = 8 + 16 = 24 > src width 16 → exceeds-source branch */
     mtl_copy_crop_to_frame(dst, src, 8, 0, 16, 16, AV_PIX_FMT_YUV422P10LE);
+    /* Contract: nothing was written — dst planes stay zero-filled. */
+    assert_true(dst_planes_all_zero(bufs, AV_PIX_FMT_YUV422P10LE, 16, 16));
     av_frame_free(&src);
     free_dst_frame(dst, bufs);
 }
