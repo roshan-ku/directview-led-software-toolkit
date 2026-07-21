@@ -1430,6 +1430,72 @@ static void test_load_and_apply_config_unknown_fmt_fails(void **state)
     assert_int_equal(ret, -1);
 }
 
+static void test_load_and_apply_config_fmt_yuv422p12le(void **state)
+{
+    (void)state;
+    char *path = write_tmpfile(ONE_SESSION_JSON("yuv422p12le"));
+    assert_non_null(path);
+    struct dvledtx_context app;
+    memset(&app, 0, sizeof(app));
+    int ret = load_and_apply_config(&app, path);
+    unlink(path); free(path);
+    assert_int_equal(ret, 0);
+    assert_int_equal(app.fmt, AV_PIX_FMT_YUV422P12LE);
+    dvledtx_context_free(&app);
+}
+
+static void test_load_and_apply_config_fmt_yuv444p12le(void **state)
+{
+    (void)state;
+    char *path = write_tmpfile(ONE_SESSION_JSON("yuv444p12le"));
+    assert_non_null(path);
+    struct dvledtx_context app;
+    memset(&app, 0, sizeof(app));
+    int ret = load_and_apply_config(&app, path);
+    unlink(path); free(path);
+    assert_int_equal(ret, 0);
+    assert_int_equal(app.fmt, AV_PIX_FMT_YUV444P12LE);
+    dvledtx_context_free(&app);
+}
+
+static void test_load_and_apply_config_fmt_gbrp12le(void **state)
+{
+    (void)state;
+    char *path = write_tmpfile(ONE_SESSION_JSON("gbrp12le"));
+    assert_non_null(path);
+    struct dvledtx_context app;
+    memset(&app, 0, sizeof(app));
+    int ret = load_and_apply_config(&app, path);
+    unlink(path); free(path);
+    assert_int_equal(ret, 0);
+    assert_int_equal(app.fmt, AV_PIX_FMT_GBRP12LE);
+    dvledtx_context_free(&app);
+}
+
+/* Config with scaling set exercises the scale_width/scale_height copy and
+ * the scaling-specific LOG_INFO branch in load_and_apply_config. */
+static void test_load_and_apply_config_with_scaling(void **state)
+{
+    (void)state;
+    char *path = write_tmpfile(
+        "{"
+        "  \"interfaces\": [{\"name\":\"0000:06:00.0\",\"sip\":\"192.168.50.29\",\"dip\":\"239.168.85.20\"}],"
+        "  \"video\": {\"width\":1920,\"height\":1080},"
+        "  \"tx_video\": {\"scale_width\":3840,\"scale_height\":2160,\"fps\":30,\"fmt\":\"yuv422p10le\"},"
+        "  \"tx_sessions\": [{\"udp_port\":20000,\"payload_type\":96,"
+        "    \"crop\":{\"x\":0,\"y\":0,\"w\":3840,\"h\":2160}}]"
+        "}");
+    assert_non_null(path);
+    struct dvledtx_context app;
+    memset(&app, 0, sizeof(app));
+    int ret = load_and_apply_config(&app, path);
+    unlink(path); free(path);
+    assert_int_equal(ret, 0);
+    assert_int_equal((int)app.scale_width,  3840);
+    assert_int_equal((int)app.scale_height, 2160);
+    dvledtx_context_free(&app);
+}
+
 static void test_load_and_apply_config_copies_log_file(void **state)
 {
     (void)state;
@@ -1588,6 +1654,10 @@ int main(void)
         cmocka_unit_test(test_load_and_apply_config_fmt_yuv444p),
         cmocka_unit_test(test_load_and_apply_config_fmt_gbrp10le),
         cmocka_unit_test(test_load_and_apply_config_fmt_yuv420),
+        cmocka_unit_test(test_load_and_apply_config_fmt_yuv422p12le),
+        cmocka_unit_test(test_load_and_apply_config_fmt_yuv444p12le),
+        cmocka_unit_test(test_load_and_apply_config_fmt_gbrp12le),
+        cmocka_unit_test(test_load_and_apply_config_with_scaling),
         cmocka_unit_test(test_load_and_apply_config_unknown_fmt_fails),
         cmocka_unit_test(test_load_and_apply_config_copies_log_file),
         cmocka_unit_test(test_load_and_apply_config_maps_screen_capture_fields),

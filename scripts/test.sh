@@ -46,11 +46,24 @@ $COVERAGE && MESON_ARGS+=("-Db_coverage=true")
 meson setup build "${MESON_ARGS[@]}" >/dev/null
 ninja -C build >/dev/null
 
+# ── Detect a live X display for opt-in screen-capture (x11grab) tests ───────
+# The screen-capture success tests run only when DVLED_TEST_DISPLAY is set to
+# an x11grab source string ("<display>+<x>,<y>"); otherwise they self-skip.
+if [[ -z "${DVLED_TEST_DISPLAY:-}" ]] && command -v xdpyinfo &>/dev/null; then
+    for disp in "${DISPLAY:-}" ":99" ":0"; do
+        [[ -z "$disp" ]] && continue
+        if DISPLAY="$disp" xdpyinfo &>/dev/null; then
+            export DVLED_TEST_DISPLAY="${disp}.0+0,0"
+            echo "Live X display detected on $disp — enabling screen-capture tests."
+            break
+        fi
+    done
+fi
+
 # ── Run tests ──────────────────────────────────────────────────────────────
 echo ""
 echo "Running unit tests..."
 echo "──────────────────────────────────────────────────────────────────────"
-
 set +e
 meson test -C build --print-errorlogs 2>&1
 TEST_EXIT=$?

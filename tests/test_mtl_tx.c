@@ -36,6 +36,8 @@
 #include <libavutil/frame.h>
 #include <libavutil/imgutils.h>
 
+#include "app_context.h"
+#include "core/session_manager.h"
 #include "mtl/mtl_tx.h"
 #include "util/logger.h"
 
@@ -122,6 +124,44 @@ static void test_get_input_format_gbrp12le(void **state)
     (void)state;
     assert_int_equal(get_input_format(AV_PIX_FMT_GBRP12LE),
                      ST_FRAME_FMT_GBRPLANAR12LE);
+}
+
+/* =========================================================================
+ * get_input_format — 10-bit / 8-bit formats + unknown
+ * ========================================================================= */
+
+static void test_get_input_format_yuv422p10le(void **state)
+{
+    (void)state;
+    assert_int_equal(get_input_format(AV_PIX_FMT_YUV422P10LE),
+                     ST_FRAME_FMT_YUV422PLANAR10LE);
+}
+
+static void test_get_input_format_yuv420p(void **state)
+{
+    (void)state;
+    assert_int_equal(get_input_format(AV_PIX_FMT_YUV420P),
+                     ST_FRAME_FMT_YUV420CUSTOM8);
+}
+
+static void test_get_input_format_yuv444p10le(void **state)
+{
+    (void)state;
+    assert_int_equal(get_input_format(AV_PIX_FMT_YUV444P10LE),
+                     ST_FRAME_FMT_YUV444PLANAR10LE);
+}
+
+static void test_get_input_format_gbrp10le(void **state)
+{
+    (void)state;
+    assert_int_equal(get_input_format(AV_PIX_FMT_GBRP10LE),
+                     ST_FRAME_FMT_GBRPLANAR10LE);
+}
+
+static void test_get_input_format_unknown_returns_error(void **state)
+{
+    (void)state;
+    assert_int_equal((int)get_input_format(AV_PIX_FMT_NONE), -1);
 }
 
 /* =========================================================================
@@ -403,6 +443,103 @@ static void test_mtl_copy_yuv444p10le_full_frame(void **state)
 }
 
 /* =========================================================================
+ * Session lifecycle / send — guard and error paths (no MTL hardware)
+ * ========================================================================= */
+
+/* mtl_tx_session_free() with a NULL handle must be a safe no-op. */
+static void test_mtl_tx_session_free_null_handle(void **state)
+{
+    (void)state;
+    struct st20p_tx_ctx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.handle = NULL;
+    mtl_tx_session_free(&ctx); /* must not crash */
+    assert_null(ctx.handle);
+}
+
+/* mtl_tx_send_yuv_frame() returns -1 when the session handle is NULL. */
+static void test_mtl_tx_send_yuv_frame_null_handle(void **state)
+{
+    (void)state;
+    struct st20p_tx_ctx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    AVFrame *src = make_src_frame(AV_PIX_FMT_YUV422P10LE, 16, 16, 0xAA);
+    assert_non_null(src);
+    assert_int_equal(mtl_tx_send_yuv_frame(&ctx, src, 0, 0, 16, 16), -1);
+    av_frame_free(&src);
+}
+
+/* mtl_tx_send_yuv_frame() returns -1 when the src frame is NULL. */
+static void test_mtl_tx_send_yuv_frame_null_src(void **state)
+{
+    (void)state;
+    struct st20p_tx_ctx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.handle = (st20p_tx_handle)0x1; /* non-NULL; guard trips on src == NULL first */
+    assert_int_equal(mtl_tx_send_yuv_frame(&ctx, NULL, 0, 0, 16, 16), -1);
+}
+
+/* mtl_tx_send_raw_yuv() returns -1 for each guard combination. */
+static void test_mtl_tx_send_raw_yuv_guards(void **state)
+{
+    (void)state;
+    struct st20p_tx_ctx ctx;
+
+    /* NULL handle */
+    memset(&ctx, 0, sizeof(ctx));
+    assert_int_equal(mtl_tx_send_raw_yuv(&ctx), -1);
+
+    /* handle set but no source buffer */
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.handle = (st20p_tx_handle)0x1;
+    ctx.source_buffer = NULL;
+    ctx.source_size = 100;
+    assert_int_equal(mtl_tx_send_raw_yuv(&ctx), -1);
+
+    /* handle + buffer set but zero source size */
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.handle = (st20p_tx_handle)0x1;
+    uint8_t buf[16] = {0};
+    ctx.source_buffer = buf;
+    ctx.source_size = 0;
+    assert_int_equal(mtl_tx_send_raw_yuv(&ctx), -1);
+}
+
+/* mtl_tx_session_create() returns -1 (before touching MTL) when the pixel
+ * format is unsupported, exercising the ops-setup and error-return path. */
+static void test_mtl_tx_session_create_unsupported_fmt(void **state)
+{
+    (void)state;
+    struct dvledtx_context app;
+    memset(&app, 0, sizeof(app));
+    assert_int_equal(dvledtx_context_alloc(&app, 1, 1), 0);
+    strncpy(app.nics[0].port, "0000:06:00.0", sizeof(app.nics[0].port) - 1);
+    app.fps           = 30;
+    app.fmt           = AV_PIX_FMT_NONE; /* unsupported → get_*_format() == -1 */
+    app.udp_port      = 20000;
+    app.payload_type  = 96;
+    app.session_net[0].udp_port     = 0; /* exercise app-default fallback */
+    app.session_net[0].payload_type = 0;
+    app.session_net[0].nic_index    = 0;
+
+    session_manager_t mgr;
+    memset(&mgr, 0, sizeof(mgr));
+
+    struct st20p_tx_ctx ctx;
+    memset(&ctx, 0, sizeof(ctx));
+    ctx.idx         = 0;
+    ctx.app         = &app;
+    ctx.crop_width  = 16;
+    ctx.crop_height = 16;
+    strncpy(ctx.session_name, "test_sess", sizeof(ctx.session_name) - 1);
+
+    assert_int_equal(mtl_tx_session_create(&mgr, &ctx, &app, 0), -1);
+    assert_null(ctx.handle);
+
+    dvledtx_context_free(&app);
+}
+
+/* =========================================================================
  * main
  * ========================================================================= */
 
@@ -426,6 +563,13 @@ int main(void)
         cmocka_unit_test(test_get_input_format_yuv444p12le),
         cmocka_unit_test(test_get_input_format_gbrp12le),
 
+        /* get_input_format — 10-bit / 8-bit + unknown */
+        cmocka_unit_test(test_get_input_format_yuv422p10le),
+        cmocka_unit_test(test_get_input_format_yuv420p),
+        cmocka_unit_test(test_get_input_format_yuv444p10le),
+        cmocka_unit_test(test_get_input_format_gbrp10le),
+        cmocka_unit_test(test_get_input_format_unknown_returns_error),
+
         /* get_st_fps */
         cmocka_unit_test(test_get_st_fps_25),
         cmocka_unit_test(test_get_st_fps_30),
@@ -443,6 +587,13 @@ int main(void)
         cmocka_unit_test(test_mtl_copy_yuv422p10le_crop_offset),
         cmocka_unit_test(test_mtl_copy_yuv420p_full_frame),
         cmocka_unit_test(test_mtl_copy_yuv444p10le_full_frame),
+
+        /* session lifecycle / send — guard and error paths */
+        cmocka_unit_test(test_mtl_tx_session_free_null_handle),
+        cmocka_unit_test(test_mtl_tx_send_yuv_frame_null_handle),
+        cmocka_unit_test(test_mtl_tx_send_yuv_frame_null_src),
+        cmocka_unit_test(test_mtl_tx_send_raw_yuv_guards),
+        cmocka_unit_test(test_mtl_tx_session_create_unsupported_fmt),
     };
 
     return cmocka_run_group_tests(tests, NULL, NULL);
