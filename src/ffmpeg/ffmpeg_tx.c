@@ -41,6 +41,22 @@
  * Internal helpers
  * ========================================================================= */
 
+/*
+ * Device-level NIC port AVOptions exposed by the mtl_st20p muxer, one per
+ * physical port slot (matches MTL's MTL_PORT_MAX = 8: primary, redundant,
+ * plus 6 additional ports p2..p7 — see mtl_common.h's MTL_TX_DEV_ARGS in
+ * the FFmpeg MTL plugin). Slot 0 (p_port/p_sip) is always set unconditionally
+ * further down in open_ffmpeg_tx() for this session's own NIC; slots 1-7
+ * are only used once, by session 0, to register every other configured NIC
+ * with mtl_dev_get()/mtl_init() before DPDK EAL is initialised. */
+#define DVLEDTX_MAX_NICS 8
+static const char* const dvledtx_nic_port_opt[DVLEDTX_MAX_NICS] = {
+  "p_port", "r_port", "p2_port", "p3_port", "p4_port", "p5_port", "p6_port", "p7_port"
+};
+static const char* const dvledtx_nic_sip_opt[DVLEDTX_MAX_NICS] = {
+  "p_sip", "r_sip", "p2_sip", "p3_sip", "p4_sip", "p5_sip", "p6_sip", "p7_sip"
+};
+
 /* =========================================================================
  * open_ffmpeg_tx
  * =========================================================================
@@ -79,14 +95,27 @@ int open_ffmpeg_tx(struct st20p_tx_ctx* ctx) {
   }
 
   /* Resolve per-session network params from JSON config; fall back to
-   * app-level defaults for CLI-only runs (session_net[] is zero-initialised). */
-  int udp_port = ctx->app->session_net[ctx->idx].udp_port;
-  if (udp_port == 0) udp_port = (int)ctx->app->udp_port + (ctx->idx * 2);
+   * app-level defaults for CLI-only runs (session_net[] is zero-initialised)
+   * or when idx is out of range for the allocated session_net[] array. */
+  int udp_port, payload_type, nic;
+  if (ctx->idx >= 0 && ctx->idx < ctx->app->st20p_sessions) {
+    udp_port = ctx->app->session_net[ctx->idx].udp_port;
+    if (udp_port == 0) udp_port = (int)ctx->app->udp_port + (ctx->idx * 2);
 
-  int payload_type = ctx->app->session_net[ctx->idx].payload_type;
-  if (payload_type == 0) payload_type = ctx->app->payload_type;
+    payload_type = ctx->app->session_net[ctx->idx].payload_type;
+    if (payload_type == 0) payload_type = ctx->app->payload_type;
 
-  int nic = ctx->app->session_net[ctx->idx].nic_index;
+    nic = ctx->app->session_net[ctx->idx].nic_index;
+  } else {
+    udp_port     = (int)ctx->app->udp_port + (ctx->idx * 2);
+    payload_type = ctx->app->payload_type;
+    nic          = 0;
+  }
+  if (nic < 0 || nic >= ctx->app->nic_count) {
+    LOG_WARN("ST20P TX(%d): nic_index=%d out of range (nic_count=%d); using NIC 0",
+             ctx->idx, nic, ctx->app->nic_count);
+    nic = 0;
+  }
 
   ret = av_opt_set    (ctx->out_fmt_ctx->priv_data, "p_port",       ctx->app->nics[nic].port,         0);
   if (ret < 0) LOG_WARN("ST20P TX(%d): av_opt_set p_port failed (ret=%d)", ctx->idx, ret);
@@ -99,30 +128,65 @@ int open_ffmpeg_tx(struct st20p_tx_ctx* ctx) {
   ret = av_opt_set_int(ctx->out_fmt_ctx->priv_data, "payload_type", (int64_t)payload_type,  0);
   if (ret < 0) LOG_WARN("ST20P TX(%d): av_opt_set_int payload_type failed (ret=%d)", ctx->idx, ret);
 
-  /* Multi-NIC: The FFmpeg mtl_st20p plugin's mtl_dev_get() uses a singleton
-   * shared MTL handle — the FIRST avformat_write_header() call creates the
-   * MTL instance via mtl_init(), which initialises DPDK EAL.  EAL cannot be
-   * re-initialised, so all NIC ports must be registered at that first call.
-   *
-   * Pass the second NIC as the "redundant" port (r_port / r_sip) on the
-   * first session so mtl_init() registers both ports with EAL.  Subsequent
-   * sessions on either NIC will reuse the shared handle.
-   *
-   * ctx->idx == 0 identifies the first session deterministically. A
-   * function-static flag would never reset across multiple start/stop
-   * cycles or repeated init calls within the same process (e.g. unit
-   * tests), so later runs could silently skip this redundant-port
-   * registration even when nic_count == 2. */
-  if (ctx->idx == 0 && ctx->app->nic_count == 2) {
-    int other = (nic == 0) ? 1 : 0;
-    ret = av_opt_set(ctx->out_fmt_ctx->priv_data, "r_port",  ctx->app->nics[other].port, 0);
-    if (ret < 0) LOG_WARN("ST20P TX(%d): av_opt_set r_port failed (ret=%d)", ctx->idx, ret);
-    ret = av_opt_set(ctx->out_fmt_ctx->priv_data, "r_sip",   ctx->app->nics[other].sip_addr_str, 0);
-    if (ret < 0) LOG_WARN("ST20P TX(%d): av_opt_set r_sip failed (ret=%d)", ctx->idx, ret);
-    ret = av_opt_set(ctx->out_fmt_ctx->priv_data, "r_tx_ip", ctx->app->nics[other].dip_addr_str, 0);
-    if (ret < 0) LOG_WARN("ST20P TX(%d): av_opt_set r_tx_ip failed (ret=%d)", ctx->idx, ret);
-    LOG_INFO("ST20P TX(%d): registering second NIC %s with MTL for multi-NIC support",
-             ctx->idx, ctx->app->nics[other].port);
+  /* Multi-NIC: mtl_init()/DPDK EAL is only ever initialised once per
+   * process (on the FIRST avformat_write_header()), so session 0
+   * registers every configured NIC (up to DVLEDTX_MAX_NICS) as a
+   * device-level port via the p_port/r_port/p2_port..p7_port AVOptions
+   * (see dvledtx_nic_*_opt[] above). Slot 1 (r_port) aliases this
+   * session's own MTL_SESSION_PORT_R, so it also needs a valid r_tx_ip
+   * or st20_tx_create() rejects it with "invalid ip 0.0.0.0". Requires a
+   * patched mtl_st20p muxer exposing p2_port..p7_port (see README). */
+  if (ctx->idx == 0) {
+    int nic_total = ctx->app->nic_count;
+    if (nic_total > DVLEDTX_MAX_NICS) {
+      LOG_WARN("ST20P TX(%d): nic_count=%d exceeds MTL's %d-port limit; "
+               "only the first %d NICs will be registered",
+               ctx->idx, nic_total, DVLEDTX_MAX_NICS, DVLEDTX_MAX_NICS);
+      nic_total = DVLEDTX_MAX_NICS;
+    }
+
+    /* Fail fast if the muxer lacks p2_port: without it, sessions beyond
+     * the first 2 NICs would silently only get a WARN from av_opt_set()
+     * below, then fail later in a much harder-to-debug way once MTL/EAL
+     * is already initialised. */
+    if (nic_total > 2 &&
+        av_opt_find(ctx->out_fmt_ctx->priv_data, "p2_port", NULL, 0, 0) == NULL) {
+      LOG_ERROR("ST20P TX(%d): mtl_st20p muxer lacks p2_port AVOption; "
+                "rebuild FFmpeg with the patched mtl_common.h (see README) "
+                "to support more than 2 NICs", ctx->idx);
+      avformat_free_context(ctx->out_fmt_ctx); ctx->out_fmt_ctx = NULL;
+      return -1;
+    }
+
+    int slot = 1; /* slot 0 (p_port/p_sip) already carries this session's own NIC */
+    for (int i = 0; i < nic_total && slot < DVLEDTX_MAX_NICS; i++) {
+      if (i == nic) continue; /* already registered in slot 0 */
+
+      ret = av_opt_set(ctx->out_fmt_ctx->priv_data, dvledtx_nic_port_opt[slot],
+                       ctx->app->nics[i].port, 0);
+      if (ret < 0)
+        LOG_WARN("ST20P TX(%d): av_opt_set %s failed (ret=%d)",
+                 ctx->idx, dvledtx_nic_port_opt[slot], ret);
+      ret = av_opt_set(ctx->out_fmt_ctx->priv_data, dvledtx_nic_sip_opt[slot],
+                       ctx->app->nics[i].sip_addr_str, 0);
+      if (ret < 0)
+        LOG_WARN("ST20P TX(%d): av_opt_set %s failed (ret=%d)",
+                 ctx->idx, dvledtx_nic_sip_opt[slot], ret);
+
+      /* Slot 1 (r_port) aliases this session's own MTL_SESSION_PORT_R —
+       * give it a valid dip so st20_tx_create()'s tv_ops_check() doesn't
+       * reject it (see comment above). Slots 2-7 are never read as this
+       * session's own transport port, so no dip is needed for them. */
+      if (slot == 1) {
+        ret = av_opt_set(ctx->out_fmt_ctx->priv_data, "r_tx_ip",
+                         ctx->app->nics[i].dip_addr_str, 0);
+        if (ret < 0) LOG_WARN("ST20P TX(%d): av_opt_set r_tx_ip failed (ret=%d)", ctx->idx, ret);
+      }
+
+      LOG_INFO("ST20P TX(%d): registering NIC %s (%s) with MTL for multi-NIC support",
+               ctx->idx, ctx->app->nics[i].port, dvledtx_nic_port_opt[slot]);
+      slot++;
+    }
   }
 
   /* RAWVIDEO stream — no encoder; MTL accepts raw packed pixel data directly. */
