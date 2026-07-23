@@ -109,6 +109,7 @@ FFmpeg is an open source project licensed under LGPL and GPL. See https://www.ff
     ```bash
     sudo apt-get install -y xserver-xorg-video-dummy ubuntu-desktop
     ```
+  - The stock `mtl_st20p` muxer only exposes `p_port`/`r_port` (2 physical NIC ports). To use more than 2 NICs with the default (non-`ENABLE_MTL_TX`) build, the plugin's `libavdevice/mtl_common.h` must be patched to add `p2_port`..`p7_port` (and matching `p2_sip`..`p7_sip`) AVOptions mapped to `devArgs.port[MTL_PORT_2..MTL_PORT_7]` / `devArgs.sip[...]`, then FFmpeg rebuilt and reinstalled. Without this patch, `nic_count` is effectively capped at 2 for the FFmpeg TX path (the `ENABLE_MTL_TX` direct-pipeline build already supports up to 8 NICs without any patch).
 
 ### Build Steps
 
@@ -143,7 +144,8 @@ dvledtx uses a JSON config file with three sections:
 | Section | Field | Description |
 |---------|-------|-------------|
 | **log_file** | `log_file` | (Optional) Path/name of the log output file (e.g. `dvledtx.log`). If omitted, logging goes to console only. |
-| **interfaces[]** | `name` | PCI BDF address of the NIC (e.g. `0000:06:00.0`) |
+| **interfaces[]** | `nic_index` | (Optional) Must equal this entry's position in the `interfaces[]` array (0, 1, 2, ...); parsing fails if it doesn't match. Informational/self-documenting only — interfaces are always resolved by array position. |
+| | `name` | PCI BDF address of the NIC (e.g. `0000:06:00.0`) |
 | | `sip` | Source IP address |
 | | `dip` | Destination multicast IP address |
 | **video** | `width` | Source frame width in pixels |
@@ -165,8 +167,8 @@ dvledtx uses a JSON config file with three sections:
 {
   "log_file": "dvledtx.log",
   "interfaces": [
-    { "name": "0000:03:10.0", "sip": "192.168.50.30", "dip": "239.168.85.20" },
-    { "name": "0000:03:10.2", "sip": "192.168.50.29", "dip": "239.168.85.21" }
+    { "nic_index": 0, "name": "0000:03:10.0", "sip": "192.168.50.30", "dip": "239.168.85.20" },
+    { "nic_index": 1, "name": "0000:03:10.2", "sip": "192.168.50.29", "dip": "239.168.85.21" }
   ],
   "video": {
     "width": 1920, "height": 1080,
@@ -347,6 +349,8 @@ Run dvledtx as usual — `x11grab` will capture whatever is rendered on the disp
 pkill -f "gnome-session --session=ubuntu"
 sudo pkill -f "Xorg :99"
 ```
+
+`interfaces[]` supports up to 8 NICs (MTL's port limit); each `tx_sessions[]` entry picks its NIC via `nic_index` (see `config/tx_fullhd_multi_nic.json` for an 8-NIC/8-session example). Using more than 2 NICs with the default FFmpeg TX path requires the patched `mtl_st20p` muxer described above.
 
 ## Logging
 
