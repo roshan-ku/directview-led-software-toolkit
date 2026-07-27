@@ -121,7 +121,13 @@ int open_ffmpeg_tx(struct st20p_tx_ctx* ctx) {
   if (ret < 0) LOG_WARN("ST20P TX(%d): av_opt_set p_port failed (ret=%d)", ctx->idx, ret);
   ret = av_opt_set    (ctx->out_fmt_ctx->priv_data, "p_sip",        ctx->app->nics[nic].sip_addr_str, 0);
   if (ret < 0) LOG_WARN("ST20P TX(%d): av_opt_set p_sip failed (ret=%d)", ctx->idx, ret);
-  ret = av_opt_set    (ctx->out_fmt_ctx->priv_data, "p_tx_ip",      ctx->app->nics[nic].dip_addr_str, 0);
+  /* Per-session dip override (unicast fan-out) takes precedence over the
+   * interface-level dip when present, so one NIC can target multiple receivers. */
+  const char* p_tx_ip = (ctx->idx >= 0 && ctx->idx < ctx->app->st20p_sessions &&
+                         ctx->app->session_net[ctx->idx].dip_addr_str[0])
+                          ? ctx->app->session_net[ctx->idx].dip_addr_str
+                          : ctx->app->nics[nic].dip_addr_str;
+  ret = av_opt_set    (ctx->out_fmt_ctx->priv_data, "p_tx_ip",      p_tx_ip, 0);
   if (ret < 0) LOG_WARN("ST20P TX(%d): av_opt_set p_tx_ip failed (ret=%d)", ctx->idx, ret);
   ret = av_opt_set_int(ctx->out_fmt_ctx->priv_data, "udp_port",     (int64_t)udp_port,      0);
   if (ret < 0) LOG_WARN("ST20P TX(%d): av_opt_set_int udp_port failed (ret=%d)", ctx->idx, ret);
@@ -260,7 +266,7 @@ int open_ffmpeg_tx(struct st20p_tx_ctx* ctx) {
   ctx->pts = 0;
   LOG_INFO("ST20P TX(%d): ffmpeg_tx opened (%dx%d %s @ %dfps) -> %s:%u via %s",
            ctx->idx, out_w, height, ffmpeg_fmt_name(ctx->app->fmt), ctx->app->fps,
-           ctx->app->nics[nic].dip_addr_str, (unsigned)udp_port, ctx->app->nics[nic].port);
+           p_tx_ip, (unsigned)udp_port, ctx->app->nics[nic].port);
   return 0;
 }
 

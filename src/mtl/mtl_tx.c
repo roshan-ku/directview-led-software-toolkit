@@ -273,7 +273,12 @@ int mtl_tx_session_create(session_manager_t* manager, struct st20p_tx_ctx* ctx,
 
   ops.port.num_port = 1;
   int nic = app->session_net[session_idx].nic_index;
-  memcpy(ops.port.dip_addr[MTL_SESSION_PORT_P], app->nics[nic].dip_addr, MTL_IP_ADDR_LEN);
+  /* Per-session dip override (unicast fan-out) takes precedence over the
+   * interface-level dip when present. */
+  const uint8_t* dst_ip = app->session_net[session_idx].dip_addr_str[0]
+                            ? app->session_net[session_idx].dip_addr
+                            : app->nics[nic].dip_addr;
+  memcpy(ops.port.dip_addr[MTL_SESSION_PORT_P], dst_ip, MTL_IP_ADDR_LEN);
   snprintf(ops.port.port[MTL_SESSION_PORT_P], MTL_PORT_MAX_LEN, "%s", app->nics[nic].port);
 
   int udp_port = app->session_net[session_idx].udp_port;

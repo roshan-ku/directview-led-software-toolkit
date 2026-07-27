@@ -34,6 +34,8 @@ struct tx_session_net {
   int      crop_w;
   int      crop_h;
   int      nic_index;   /* which NIC this session uses (index into nics[]) */
+  char     dip_addr_str[IP_STR_LEN]; /* optional per-session dest IP ('' = use NIC dip) */
+  uint8_t  dip_addr[IP_ADDR_BYTES];  /* binary form of dip_addr_str */
 };
 
 /* Application context for TX sessions */

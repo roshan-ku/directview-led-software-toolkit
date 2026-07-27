@@ -418,6 +418,12 @@ int parse_tx_config(const char* config_file, struct dvledtx_config* config) {
         v = extract_json_int(sess_obj, sess_end, "nic_index");
         s->nic_index = (v >= 0) ? v : 0;  /* default to NIC 0 for backward compat */
 
+        /* Optional per-session destination IP override. When present it lets a
+         * single NIC unicast different sessions to different receivers; when
+         * empty the session inherits its interface's dip. */
+        s->dip[0] = '\0';
+        extract_json_string(sess_obj, sess_end, "dip", s->dip, sizeof(s->dip));
+
         /* crop sub-object */
         const char* crop_obj = find_object(sess_obj, sess_end, "crop");
         if (crop_obj == NULL) {
@@ -505,7 +511,9 @@ int validate_tx_config(const struct dvledtx_config* config) {
             }
         }
 
-        /* Validate destination IP — must be multicast */
+        /* Validate destination IP — accept either a multicast group
+         * (one-to-many) or a unicast address (dedicated port-to-port
+         * delivery to a single receiver). */
         {
             struct in_addr tmp;
             if (inet_pton(AF_INET, config->interface_dip[ni], &tmp) != 1) {
@@ -515,16 +523,25 @@ int validate_tx_config(const struct dvledtx_config* config) {
                 return -1;
             }
             uint32_t dip_host = ntohl(tmp.s_addr);
-            if ((dip_host & 0xF0000000U) != 0xE0000000U) {
+            if ((dip_host & 0xF0000000U) == 0xE0000000U) {
+                /* Multicast (224.0.0.0/4). */
+                if ((dip_host >> 24) != 239) {
+                    LOG_WARN("interfaces[%d]: destination IP '%s' is outside the "
+                             "administratively-scoped multicast range (239.0.0.0/8)",
+                             ni, config->interface_dip[ni]);
+                }
+            } else if (dip_host == 0x00000000U || dip_host == 0xFFFFFFFFU ||
+                       (dip_host & 0xFF000000U) == 0x7F000000U) {
+                /* Reject unusable unicast (any/broadcast/loopback). */
                 LOG_ERROR("interfaces[%d]: destination IP '%s' is not a valid "
-                          "multicast address (must be in 224.0.0.0/4)",
+                          "unicast or multicast address",
                           ni, config->interface_dip[ni]);
                 regfree(&bdf_regex);
                 return -1;
-            }
-            if ((dip_host >> 24) != 239) {
-                LOG_WARN("interfaces[%d]: destination IP '%s' is outside the "
-                         "administratively-scoped multicast range (239.0.0.0/8)",
+            } else {
+                /* Unicast destination: point-to-point delivery to one receiver. */
+                LOG_INFO("interfaces[%d]: unicast destination '%s' "
+                         "(point-to-point delivery)",
                          ni, config->interface_dip[ni]);
             }
         }
@@ -746,6 +763,31 @@ int validate_tx_config(const struct dvledtx_config* config) {
                 return -1;
             }
         }
+
+        /* Optional per-session destination IP: multicast group or unicast
+         * (dedicated point-to-point delivery to a single receiver). */
+        if (s->dip[0] != '\0') {
+            struct in_addr tmp;
+            if (inet_pton(AF_INET, s->dip, &tmp) != 1) {
+                LOG_ERROR("session %d: invalid destination IP '%s'", i, s->dip);
+                return -1;
+            }
+            uint32_t dip_host = ntohl(tmp.s_addr);
+            if ((dip_host & 0xF0000000U) == 0xE0000000U) {
+                if ((dip_host >> 24) != 239)
+                    LOG_WARN("session %d: destination IP '%s' is outside the "
+                             "administratively-scoped multicast range (239.0.0.0/8)",
+                             i, s->dip);
+            } else if (dip_host == 0x00000000U || dip_host == 0xFFFFFFFFU ||
+                       (dip_host & 0xFF000000U) == 0x7F000000U) {
+                LOG_ERROR("session %d: destination IP '%s' is not a valid "
+                          "unicast or multicast address", i, s->dip);
+                return -1;
+            } else {
+                LOG_INFO("session %d: unicast destination '%s' (point-to-point delivery)",
+                         i, s->dip);
+            }
+        }
     }
 
     return 0;
@@ -834,6 +876,12 @@ int load_and_apply_config(struct dvledtx_context* app, const char* config_file) 
         app->session_net[i].crop_w       = config.sessions[i].crop_w;
         app->session_net[i].crop_h       = config.sessions[i].crop_h;
         app->session_net[i].nic_index    = config.sessions[i].nic_index;
+        {
+            size_t n = strnlen(config.sessions[i].dip,
+                               sizeof(app->session_net[i].dip_addr_str) - 1);
+            memcpy(app->session_net[i].dip_addr_str, config.sessions[i].dip, n);
+            app->session_net[i].dip_addr_str[n] = '\0';
+        }
     }
 
     /* Use first session's udp_port as the legacy app->udp_port
@@ -908,6 +956,17 @@ int resolve_ip_addrs(struct dvledtx_context* ctx) {
             LOG_ERROR("NIC[%d]: invalid destination IP address %s",
                       ni, ctx->nics[ni].dip_addr_str);
             return -1;
+        }
+    }
+    /* Resolve optional per-session destination overrides. */
+    for (int i = 0; i < ctx->st20p_sessions; i++) {
+        if (ctx->session_net[i].dip_addr_str[0] != '\0') {
+            if (inet_pton(AF_INET, ctx->session_net[i].dip_addr_str,
+                          ctx->session_net[i].dip_addr) != 1) {
+                LOG_ERROR("session %d: invalid destination IP address %s",
+                          i, ctx->session_net[i].dip_addr_str);
+                return -1;
+            }
         }
     }
     return 0;

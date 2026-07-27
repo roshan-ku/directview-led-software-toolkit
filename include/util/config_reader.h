@@ -19,6 +19,9 @@ struct tx_session_config {
   int      crop_w;
   int      crop_h;
   int      nic_index;  /* which NIC (index into interface arrays); default 0 */
+  char     dip[32];    /* optional per-session destination IP; overrides the
+                        * interface dip so one NIC can unicast different
+                        * sessions to different receivers ('' = use iface dip) */
 };
 
 /* Full application configuration parsed from JSON */
