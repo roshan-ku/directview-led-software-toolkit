@@ -1,0 +1,95 @@
+#
+# BSD 3-Clause License
+# Copyright (C) 2026 Intel Corporation
+# SPDX-License-Identifier: BSD-3-Clause
+#
+# Hardware Validation Report
+#
+# Manually triggered (workflow_dispatch) from GitHub. The job runs on a
+# self-hosted runner registered on the validation machine (the box with the
+# DPDK-bound NICs, hugepages, sample videos and root access). It builds
+# dvledtx, runs the functional validation suite, and uploads the generated
+# Excel/JSON report as a downloadable artifact.
+#
+# All other workflows keep running on GitHub-hosted runners; only this one
+# targets the local hardware.
+#
+name: Hardware Validation Report
+
+on:
+  workflow_dispatch:
+    inputs:
+      ft_test_time:
+        description: 'Seconds each TX/FT test streams for (raise for soak runs)'
+        required: false
+        default: '30'
+      skip_tx:
+        description: 'Skip TX/hardware tests (config/validation only)'
+        type: boolean
+        required: false
+        default: false
+
+permissions: {}
+
+concurrency:
+  # Never run two hardware validations at once on the same machine.
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Run validation on local hardware
+    runs-on: [self-hosted, linux]
+    timeout-minutes: 180
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build dvledtx
+        run: bash scripts/build.sh
+
+      - name: Install report dependencies (openpyxl)
+        run: |
+          python3 -m pip install --user openpyxl \
+            || python3 -m pip install --user --break-system-packages openpyxl
+
+      - name: Run validation report generator
+        env:
+          FT_TEST_TIME: ${{ inputs.ft_test_time }}
+          SKIP_TX: ${{ inputs.skip_tx }}
+        run: |
+          set -euo pipefail
+
+          # Validate the numeric input before using it (defence-in-depth).
+          case "$FT_TEST_TIME" in
+            ''|*[!0-9]*)
+              echo "Invalid ft_test_time '$FT_TEST_TIME' — must be a positive integer" >&2
+              exit 1
+              ;;
+          esac
+
+          ARGS=(--binary build/dvledtx
+                --ft-test-time "$FT_TEST_TIME"
+                --output validation_report.xlsx
+                --results validation_results.json)
+
+          if [ "$SKIP_TX" = "true" ]; then
+            ARGS+=(--skip-tx)
+          fi
+
+          python3 generate_validation_report.py "${ARGS[@]}"
+
+      - name: Upload validation report
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: always()
+        with:
+          name: dvledtx-validation-report-${{ github.run_id }}
+          path: |
+            validation_report.xlsx
+            validation_results.json
+          retention-days: 30
+          if-no-files-found: warn
