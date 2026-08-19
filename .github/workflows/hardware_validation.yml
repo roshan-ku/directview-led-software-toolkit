@@ -39,7 +39,10 @@ concurrency:
 jobs:
   validate:
     name: Run validation on local hardware
-    runs-on: [self-hosted, linux]
+    # 'dvledtx-hw' is a custom label — add it when registering this runner
+    # (./config.sh ... --labels dvledtx-hw) so this job only ever runs on the
+    # dedicated validation machine, never on any other self-hosted runner.
+    runs-on: [self-hosted, linux, dvledtx-hw]
     timeout-minutes: 180
     permissions:
       contents: read
